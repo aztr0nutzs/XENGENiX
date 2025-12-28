@@ -28,6 +28,7 @@
         android:hardwareAccelerated="true"
         android:label="XENO-GENICS"
         android:supportsRtl="true"
+        android:testOnly="true"
         android:usesCleartextTraffic="false" >
         <activity
             android:name="com.example.xenogenics.MainActivity"

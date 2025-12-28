@@ -4,7 +4,7 @@
             "outputFile": "com.example.xenogenics.app-mergeDebugResources-32:/values-watch-v21/values-watch-v21.xml",
             "map": [
                 {
-                    "source": "/home/aztr0nutzs/.gradle/caches/8.13/transforms/d07b74b2fe1690b14abc5c1e1755676a/transformed/appcompat-1.7.1/res/values-watch-v21/values-watch-v21.xml",
+                    "source": "C:\\Users\\Administrator\\.gradle\\caches\\8.13\\transforms\\d07b74b2fe1690b14abc5c1e1755676a\\transformed\\appcompat-1.7.1\\res\\values-watch-v21\\values-watch-v21.xml",
                     "from": {
                         "startLines": "2,6,10",
                         "startColumns": "4,4,4",
