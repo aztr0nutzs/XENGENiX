@@ -9,6 +9,7 @@ const LS_KEYS = {
   bestRun: "xg_best_run_v1",
   settings: "xg_settings_v1",
   upgrades: "xg_upgrades_v1",
+  knctScores: "xg_knct4_scores_v1",
 };
 
 function clamp(n, a, b) { return Math.max(a, Math.min(b, n)); }
@@ -80,6 +81,72 @@ const PRIMARY_CONTRACT = {
   desc: "Extract with Alarm < 50.",
   bonus: 70,
 };
+
+/** ---------------------------
+ *  KNCT4 LOGIC
+ *  --------------------------- */
+const KNCT4_ROWS = 6;
+const KNCT4_COLS = 7;
+const KNCT4_TO_WIN = 4;
+
+function makeKnct4Board() {
+  return Array.from({ length: KNCT4_ROWS }, () => Array.from({ length: KNCT4_COLS }, () => 0));
+}
+
+function knct4DropRow(board, col) {
+  for (let row = KNCT4_ROWS - 1; row >= 0; row -= 1) {
+    if (board[row][col] === 0) return row;
+  }
+  return -1;
+}
+
+function knct4CollectLine(board, row, col, dr, dc, player) {
+  const line = [{ row, col }];
+
+  for (let step = 1; step < KNCT4_TO_WIN; step += 1) {
+    const r = row + dr * step;
+    const c = col + dc * step;
+    if (r < 0 || r >= KNCT4_ROWS || c < 0 || c >= KNCT4_COLS) break;
+    if (board[r][c] !== player) break;
+    line.push({ row: r, col: c });
+  }
+
+  for (let step = 1; step < KNCT4_TO_WIN; step += 1) {
+    const r = row - dr * step;
+    const c = col - dc * step;
+    if (r < 0 || r >= KNCT4_ROWS || c < 0 || c >= KNCT4_COLS) break;
+    if (board[r][c] !== player) break;
+    line.unshift({ row: r, col: c });
+  }
+
+  return line;
+}
+
+function knct4CheckWin(board, row, col, player) {
+  const directions = [
+    [0, 1],
+    [1, 0],
+    [1, 1],
+    [1, -1],
+  ];
+
+  for (const [dr, dc] of directions) {
+    const line = knct4CollectLine(board, row, col, dr, dc, player);
+    if (line.length >= KNCT4_TO_WIN) return line;
+  }
+  return null;
+}
+
+function IconBadge({ icon: IconComp, label, color, className }) {
+  if (!IconComp) {
+    return (
+      <span className={className} style={{ color }}>
+        {label}
+      </span>
+    );
+  }
+  return <IconComp className={className} color={color} size="1.6em" />;
+}
 
 /** ---------------------------
  *  SECTORS + PROCEDURES
@@ -502,8 +569,9 @@ function App() {
   const rotationRef = useRef({ wheelEl: null });
   const glitchHostRef = useRef(null);
 
-  // Screens: lobby | game | store | settings
+  // Screens: lobby | game | knct4 | store | settings
   const [screen, setScreen] = useState("lobby");
+  const [iconSet, setIconSet] = useState({});
 
   // Persistent settings/upgrades
   const [settings, setSettings] = useState(() => ({ ...DEFAULT_SETTINGS, ...loadJSON(LS_KEYS.settings, {}) }));
@@ -511,6 +579,18 @@ function App() {
 
   const [geneCredits, setGeneCredits] = useState(() => safeParseInt(localStorage.getItem(LS_KEYS.geneCredits), 0));
   const bestRun = safeParseInt(localStorage.getItem(LS_KEYS.bestRun), 0);
+
+  useEffect(() => {
+    let active = true;
+    import("https://cdn.skypack.dev/lucide-react")
+      .then((mod) => {
+        if (active) setIconSet(mod || {});
+      })
+      .catch(() => {
+        if (active) setIconSet({});
+      });
+    return () => { active = false; };
+  }, []);
 
   // Apply UI intensity to CSS variable
   useEffect(() => {
@@ -579,6 +659,23 @@ function App() {
     { t: "BOOT", m: "XG-OS kernel loaded." },
     { t: "SYS",  m: "Main lobby online. Awaiting operator." },
   ]);
+  const [knctLogLines, setKnctLogLines] = useState([
+    { t: "BOOT", m: "KNCT4 grid initialized." },
+    { t: "SYS", m: "Awaiting link signal." },
+  ]);
+
+  const [knctBoard, setKnctBoard] = useState(() => makeKnct4Board());
+  const [knctPlayer, setKnctPlayer] = useState(1);
+  const [knctStarter, setKnctStarter] = useState(1);
+  const [knctMoves, setKnctMoves] = useState([]);
+  const [knctWinner, setKnctWinner] = useState(null);
+  const [knctHoverCol, setKnctHoverCol] = useState(null);
+  const [knctScores, setKnctScores] = useState(() => ({
+    p1: 0,
+    p2: 0,
+    draws: 0,
+    ...loadJSON(LS_KEYS.knctScores, {}),
+  }));
 
   // Snapshot helper
   const snapshotRef = useRef(null);
@@ -589,6 +686,13 @@ function App() {
 
   function pushLog(tag, msg) {
     setLogLines((prev) => {
+      const next = [...prev, { t: tag, m: msg }];
+      return next.slice(-16);
+    });
+  }
+
+  function pushKnctLog(tag, msg) {
+    setKnctLogLines((prev) => {
       const next = [...prev, { t: tag, m: msg }];
       return next.slice(-16);
     });
@@ -613,6 +717,81 @@ function App() {
       .to(".panel, .panel-2", { duration: 1.9, opacity: 0.92, ease: "sine.inOut" });
     return () => tl.kill();
   }, [settings.reducedMotion]);
+
+  useEffect(() => {
+    saveJSON(LS_KEYS.knctScores, knctScores);
+  }, [knctScores]);
+
+  useEffect(() => {
+    if (screen !== "knct4") return;
+    pushKnctLog("SYS", "KNCT4 lobby handshake complete.");
+  }, [screen]);
+
+  function resetKnctMatch(nextStarter = null) {
+    const starter = nextStarter ?? knctStarter;
+    setKnctBoard(makeKnct4Board());
+    setKnctMoves([]);
+    setKnctWinner(null);
+    setKnctPlayer(starter);
+    setKnctHoverCol(null);
+    pushKnctLog("SYS", `Match reset. Node ${starter} holds first link.`);
+  }
+
+  function startNextKnctMatch() {
+    const nextStarter = knctStarter === 1 ? 2 : 1;
+    setKnctStarter(nextStarter);
+    resetKnctMatch(nextStarter);
+  }
+
+  function resetKnctScores() {
+    setKnctScores({ p1: 0, p2: 0, draws: 0 });
+    pushKnctLog("SYS", "Score cache cleared.");
+    vibrate([0, 40], settings.haptics);
+  }
+
+  function handleKnctDrop(col) {
+    if (knctWinner) return;
+    const row = knct4DropRow(knctBoard, col);
+    if (row < 0) {
+      pushKnctLog("ERR", "Column locked: no capacity.");
+      vibrate([0, 60], settings.haptics);
+      return;
+    }
+
+    const nextBoard = knctBoard.map((r) => r.slice());
+    nextBoard[row][col] = knctPlayer;
+
+    const nextMoves = [...knctMoves, { row, col, player: knctPlayer }];
+    setKnctBoard(nextBoard);
+    setKnctMoves(nextMoves);
+
+    const winLine = knct4CheckWin(nextBoard, row, col, knctPlayer);
+    if (winLine) {
+      setKnctWinner({ player: knctPlayer, cells: winLine });
+      setKnctScores((prev) => ({
+        ...prev,
+        p1: prev.p1 + (knctPlayer === 1 ? 1 : 0),
+        p2: prev.p2 + (knctPlayer === 2 ? 1 : 0),
+      }));
+      pushKnctLog("WIN", `Node ${knctPlayer} forged a 4-link chain.`);
+      glitchPulse(0.4);
+      vibrate([0, 45, 70, 45, 90], settings.haptics);
+      return;
+    }
+
+    if (nextMoves.length >= KNCT4_ROWS * KNCT4_COLS) {
+      setKnctWinner({ player: 0, cells: [] });
+      setKnctScores((prev) => ({ ...prev, draws: prev.draws + 1 }));
+      pushKnctLog("SYS", "Grid saturated. Draw logged.");
+      vibrate([0, 30, 30, 30], settings.haptics);
+      return;
+    }
+
+    const nextPlayer = knctPlayer === 1 ? 2 : 1;
+    setKnctPlayer(nextPlayer);
+    pushKnctLog("SYS", `Node ${nextPlayer} online.`);
+    vibrate([0, 16], settings.haptics);
+  }
 
   function hasOrgan(id) { return organs.some(o => o.id === id); }
 
@@ -1315,6 +1494,22 @@ function App() {
    *  UI Helpers
    *  --------------------------- */
   const extractReady = stability >= 100 && contamination < 100 && alarm < 100;
+  const knctWinningSet = useMemo(() => {
+    const entries = knctWinner?.cells || [];
+    return new Set(entries.map((cell) => `${cell.row}-${cell.col}`));
+  }, [knctWinner]);
+  const knctStatusText = knctWinner
+    ? (knctWinner.player === 0 ? "GRID DRAW" : `NODE ${knctWinner.player} CONNECTED`)
+    : `NODE ${knctPlayer} ACTIVE`;
+  const knctMovesLeft = KNCT4_ROWS * KNCT4_COLS - knctMoves.length;
+  const knctMotionStyle = settings.reducedMotion ? { transition: "none" } : null;
+  const DnaIcon = iconSet.Dna;
+  const ActivityIcon = iconSet.Activity;
+  const GamepadIcon = iconSet.Gamepad2;
+  const SettingsIcon = iconSet.Settings;
+  const SparklesIcon = iconSet.Sparkles;
+  const LayersIcon = iconSet.Layers;
+  const CircleDotIcon = iconSet.CircleDot;
 
   function navButton(id, label) {
     const active = screen === id;
@@ -1346,14 +1541,55 @@ function App() {
           <div className="hr-scan my-[1.2vmin]" />
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-[1.2vmin]">
+            <div className="panel-2 p-[1.8vmin] md:col-span-2">
+              <div className="os-title text-[1.35vmin]" style={{ color: PALETTE.green }}>GAME BAY</div>
+              <div className="mt-[1.2vmin] grid grid-cols-1 md:grid-cols-2 gap-[1.2vmin]">
+                <div className="game-card">
+                  <div className="flex items-center gap-[1.0vmin]">
+                    <div className="game-icon">
+                      <IconBadge icon={DnaIcon} label="DNA" color={PALETTE.green} className="game-icon-svg" />
+                    </div>
+                    <div>
+                      <div className="os-title text-[1.3vmin]" style={{ color: PALETTE.green }}>SEQUENCER WHEEL</div>
+                      <div className="text-[1.2vmin] opacity-80">Bio-lab extraction runs</div>
+                    </div>
+                  </div>
+                  <div className="mt-[1.0vmin] text-[1.25vmin] opacity-85">
+                    Spin the sequencer, stack mutagens, and extract with stealth discipline.
+                  </div>
+                  <button className="xg-btn w-full mt-[1.2vmin]" onClick={startNewRun}>
+                    Enter Sequencer
+                  </button>
+                </div>
+
+                <div className="game-card">
+                  <div className="flex items-center gap-[1.0vmin]">
+                    <div className="game-icon">
+                      <IconBadge icon={GamepadIcon} label="GRID" color={PALETTE.blue} className="game-icon-svg" />
+                    </div>
+                    <div>
+                      <div className="os-title text-[1.3vmin]" style={{ color: PALETTE.blue }}>KNCT4 GRID</div>
+                      <div className="text-[1.2vmin] opacity-80">Link-array duel</div>
+                    </div>
+                  </div>
+                  <div className="mt-[1.0vmin] text-[1.25vmin] opacity-85">
+                    Drop nodes, forge a 4-link chain, and outmaneuver your rival operator.
+                  </div>
+                  <button className="xg-btn w-full mt-[1.2vmin]" onClick={() => setScreen("knct4")}>
+                    Launch KNCT4
+                  </button>
+                </div>
+              </div>
+            </div>
+
             <div className="panel-2 p-[1.8vmin]">
-              <div className="os-title text-[1.35vmin]" style={{ color: PALETTE.green }}>RUN CONFIG</div>
+              <div className="os-title text-[1.35vmin]" style={{ color: PALETTE.green }}>RUN CONFIG // SEQUENCER</div>
               <div className="mt-[1.0vmin] text-[1.35vmin] opacity-85">
                 Difficulty: <span style={{ color: PALETTE.blue }}>{settings.difficulty}</span><br />
                 Max Cycles: <span style={{ color: PALETTE.blue }}>{clamp(settings.maxCycles, 8, 18)}</span><br />
                 Start Tokens: <span style={{ color: PALETTE.green }}>{upgrades.startTokens}</span><br />
-                Start Stability: <span style={{ color: PALETTE.blue }}>{difficultyPreset(settings.difficulty).startStability + (upgrades.startStabilityUp||0)}</span><br />
-                Start Alarm: <span style={{ color: "rgba(255,140,0,0.88)" }}>{Math.max(0, difficultyPreset(settings.difficulty).startAlarm - (upgrades.startAlarmDown||0))}</span>
+                Start Stability: <span style={{ color: PALETTE.blue }}>{difficultyPreset(settings.difficulty).startStability + (upgrades.startStabilityUp || 0)}</span><br />
+                Start Alarm: <span style={{ color: "rgba(255,140,0,0.88)" }}>{Math.max(0, difficultyPreset(settings.difficulty).startAlarm - (upgrades.startAlarmDown || 0))}</span>
               </div>
 
               <div className="mt-[1.4vmin] grid grid-cols-1 gap-[1.0vmin]">
@@ -1777,6 +2013,137 @@ function App() {
     );
   }
 
+  function Knct4Screen() {
+    return (
+      <div className="grid grid-cols-1 md:grid-cols-[1.15fr_0.85fr] gap-[1.6vmin] min-h-0">
+        <div className="panel p-[2vmin] min-h-0 flex flex-col">
+          <div className="flex items-center justify-between">
+            <div className="os-title text-[1.8vmin]" style={{ color: PALETTE.blue }}>KNCT4 // LINK ARRAY</div>
+            <div className="text-[1.25vmin] opacity-80">
+              Status <span style={{ color: knctWinner ? PALETTE.green : PALETTE.blue }}>{knctStatusText}</span>{" "}
+              | Moves Left <span style={{ color: PALETTE.green }}>{knctMovesLeft}</span>
+            </div>
+          </div>
+          <div className="hr-scan my-[1.2vmin]" />
+
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-[1.0vmin] text-[1.2vmin]">
+            <div className="panel p-[1.0vmin] flex items-center gap-[0.8vmin]">
+              <IconBadge icon={CircleDotIcon} label="NODE" color={PALETTE.blue} className="game-icon-svg" />
+              <div>Active: <span style={{ color: PALETTE.blue }}>Node {knctPlayer}</span></div>
+            </div>
+            <div className="panel p-[1.0vmin] flex items-center gap-[0.8vmin]">
+              <IconBadge icon={ActivityIcon} label="LINK" color={PALETTE.green} className="game-icon-svg" />
+              <div>Starter: <span style={{ color: PALETTE.green }}>Node {knctStarter}</span></div>
+            </div>
+            <div className="panel p-[1.0vmin] flex items-center gap-[0.8vmin]">
+              <IconBadge icon={SparklesIcon} label="CHAIN" color={PALETTE.green} className="game-icon-svg" />
+              <div>Chain Target: <span style={{ color: PALETTE.green }}>4</span></div>
+            </div>
+            <div className="panel p-[1.0vmin] flex items-center gap-[0.8vmin]">
+              <IconBadge icon={LayersIcon} label="GRID" color={PALETTE.blue} className="game-icon-svg" />
+              <div>Grid: <span style={{ color: PALETTE.blue }}>7 × 6</span></div>
+            </div>
+          </div>
+
+          <div className="mt-[1.6vmin] flex-1 min-h-0 grid place-items-center">
+            <div
+              className="knct-board"
+              onPointerLeave={() => setKnctHoverCol(null)}
+              style={{ width: "min(78vmin, 92vw)" }}
+            >
+              <div className="knct-grid">
+                {knctBoard.map((row, rIdx) => (
+                  row.map((cell, cIdx) => {
+                    const cellKey = `${rIdx}-${cIdx}`;
+                    const isWin = knctWinningSet.has(cellKey);
+                    const isHover = knctHoverCol === cIdx && !knctWinner;
+                    const discClass = cell === 1
+                      ? "knct-disc knct-disc--p1"
+                      : cell === 2
+                        ? "knct-disc knct-disc--p2"
+                        : "knct-disc knct-disc--empty";
+
+                    return (
+                      <button
+                        key={cellKey}
+                        type="button"
+                        className={`knct-cell ${isHover ? "knct-cell--hover" : ""}`}
+                        onPointerEnter={() => setKnctHoverCol(cIdx)}
+                        onClick={() => handleKnctDrop(cIdx)}
+                        disabled={!!knctWinner}
+                        aria-label={`Drop node in column ${cIdx + 1}`}
+                        style={knctMotionStyle}
+                      >
+                        <span
+                          className={`${discClass} ${isWin ? "knct-disc--win" : ""}`}
+                          style={knctMotionStyle}
+                        />
+                      </button>
+                    );
+                  })
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-[1.6vmin] grid grid-cols-2 md:grid-cols-4 gap-[1.0vmin]">
+            <button className="xg-btn" onClick={() => resetKnctMatch()} disabled={knctMoves.length === 0}>
+              Reset Match
+            </button>
+            <button className="xg-btn" onClick={startNextKnctMatch}>
+              Next Match
+            </button>
+            <button className="xg-btn" onClick={() => setScreen("lobby")}>
+              Back to Lobby
+            </button>
+            <button className="xg-btn" onClick={() => setScreen("settings")}>
+              Settings
+            </button>
+          </div>
+          <div className="mt-[1.0vmin] text-[1.2vmin] opacity-70">
+            Tap any column to deploy a node. First operator to link four nodes wins the grid.
+          </div>
+        </div>
+
+        <div className="panel-2 p-[2vmin] min-h-0 flex flex-col">
+          <div className="os-title text-[1.8vmin]" style={{ color: PALETTE.green }}>KNCT4 CONSOLE</div>
+          <div className="hr-scan my-[1.2vmin]" />
+
+          <div className="panel p-[1.6vmin] mb-[1.2vmin]">
+            <div className="os-title text-[1.35vmin]" style={{ color: PALETTE.blue }}>SCORE CORE</div>
+            <div className="mt-[0.8vmin] text-[1.3vmin] opacity-85">
+              Node 1 Wins: <span style={{ color: PALETTE.blue }}>{knctScores.p1}</span><br />
+              Node 2 Wins: <span style={{ color: PALETTE.green }}>{knctScores.p2}</span><br />
+              Draws: <span style={{ color: "rgba(255,140,0,0.88)" }}>{knctScores.draws}</span>
+            </div>
+            <button className="xg-btn w-full mt-[1.0vmin]" onClick={resetKnctScores}>
+              Purge Score Cache
+            </button>
+          </div>
+
+          <div className="panel p-[1.6vmin] mb-[1.2vmin]">
+            <div className="os-title text-[1.35vmin]" style={{ color: PALETTE.blue }}>TACTICS</div>
+            <div className="mt-[0.8vmin] text-[1.25vmin] opacity-85">
+              Control the center columns, block a rival’s 3-link, and pivot to diagonal chains.
+            </div>
+          </div>
+
+          <div className="panel flex-1 min-h-0 p-[1.6vmin] overflow-hidden">
+            <div className="os-title text-[1.35vmin]" style={{ color: PALETTE.blue }}>GRID LOG</div>
+            <div className="mt-[1.0vmin] log h-full overflow-auto pr-[0.8vmin]">
+              {knctLogLines.map((ln, i) => (
+                <div key={i} className="line">
+                  <span className={ln.t === "ERR" || ln.t === "FAIL" ? "tag2" : "tag"}>[{ln.t}]</span>{" "}
+                  <span>{ln.m}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   /** ---------------------------
    *  Top shell layout
    *  --------------------------- */
@@ -1800,6 +2167,7 @@ function App() {
 
           <div className="flex items-center gap-[1.0vmin]">
             {navButton("lobby", "Lobby")}
+            {navButton("knct4", "KNCT4")}
             {navButton("store", "Store")}
             {navButton("settings", "Settings")}
             {screen === "game" ? navButton("game", "Run") : null}
@@ -1808,6 +2176,7 @@ function App() {
 
         <div className="min-h-0">
           {screen === "lobby" && <LobbyScreen />}
+          {screen === "knct4" && <Knct4Screen />}
           {screen === "store" && <StoreScreen />}
           {screen === "settings" && <SettingsScreen />}
           {screen === "game" && <GameScreen />}
@@ -1815,7 +2184,7 @@ function App() {
 
         <div className="panel px-[2vmin] py-[1.4vmin] flex items-center justify-between">
           <div className="text-[1.2vmin] opacity-80">
-            BUILD: XG-OS / Lobby + Store + Settings + Run / React18 + Tailwind + GSAP + Babel
+            BUILD: XG-OS / Lobby + Store + Settings + Run + KNCT4 / React18 + Tailwind + GSAP + Babel
           </div>
           <div className="text-[1.2vmin] opacity-80">
             WIN: Extract with Stability ≥ 100 | FAIL: Contam/Alarm reach 100 | CONTRACT: Quiet Extraction (Alarm &lt; 50)
