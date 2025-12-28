@@ -38,6 +38,9 @@ public class MainActivity extends AppCompatActivity {
         // Asset loading
         ws.setAllowFileAccess(true);
         ws.setAllowContentAccess(true);
+        // Allow file:// assets to load HTTPS CDN scripts/styles.
+        ws.setAllowFileAccessFromFileURLs(true);
+        ws.setAllowUniversalAccessFromFileURLs(true);
 
         // For modern sites / CDN usage inside WebView
         // (CDNs are https; no cleartext needed)

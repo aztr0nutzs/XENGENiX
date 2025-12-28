@@ -4449,6 +4449,7 @@ int style Theme_MaterialComponents_Light_NoActionBar 0x7f0f0270
 int style Theme_MaterialComponents_Light_NoActionBar_Bridge 0x7f0f0271
 int style Theme_MaterialComponents_NoActionBar 0x7f0f0272
 int style Theme_MaterialComponents_NoActionBar_Bridge 0x7f0f0273
+int style Theme_Xenogenics 0x7f0f0466
 int style ThemeOverlay_AppCompat 0x7f0f0274
 int style ThemeOverlay_AppCompat_ActionBar 0x7f0f0275
 int style ThemeOverlay_AppCompat_Dark 0x7f0f0276

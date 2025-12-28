@@ -10,6 +10,8 @@ const LS_KEYS = {
   settings: "xg_settings_v1",
   upgrades: "xg_upgrades_v1",
   knctScores: "xg_knct4_scores_v1",
+  knctChipSet: "xg_knct4_chipset_v1",
+  knctLastResult: "xg_knct4_last_result_v1",
 };
 
 function clamp(n, a, b) { return Math.max(a, Math.min(b, n)); }
@@ -18,6 +20,24 @@ function safeParseInt(v, fallback) { const n = parseInt(v, 10); return Number.is
 
 function vibrate(pattern, enabled) {
   try { if (enabled && window?.navigator?.vibrate) window.navigator.vibrate(pattern); } catch (_) {}
+}
+function playTone(freq, durationMs, enabled) {
+  if (!enabled) return;
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    const ctx = new Ctx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.value = freq;
+    gain.gain.value = 0.07;
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + durationMs / 1000);
+    osc.onended = () => ctx.close();
+  } catch (_) {}
 }
 
 function rarityColor(r) {
@@ -49,6 +69,7 @@ function saveJSON(key, obj) {
  *  --------------------------- */
 const DEFAULT_SETTINGS = {
   haptics: true,
+  sound: true,
   reducedMotion: false,
   uiIntensity: 1.0,        // 0.6 .. 1.2
   difficulty: "STANDARD",  // "EASY" | "STANDARD" | "HARD"
@@ -83,7 +104,7 @@ const PRIMARY_CONTRACT = {
 };
 
 /** ---------------------------
- *  KNCT4 LOGIC
+ *  CONNECT-4 LOGIC
  *  --------------------------- */
 const KNCT4_ROWS = 6;
 const KNCT4_COLS = 7;
@@ -136,6 +157,27 @@ function knct4CheckWin(board, row, col, player) {
   }
   return null;
 }
+
+const KNCT4_CHIPSETS = [
+  {
+    id: "classic",
+    label: "Cyan / Green",
+    p1: { color: "#00FFFF", image: null },
+    p2: { color: "#39FF14", image: null },
+  },
+  {
+    id: "amber-blue",
+    label: "Amber / Blue",
+    p1: { color: "#ffb347", image: "../knct4/assets/blob_amber_happy.png" },
+    p2: { color: "#5ad1ff", image: "../knct4/assets/blob_blue_grin.png" },
+  },
+  {
+    id: "magenta-lime",
+    label: "Magenta / Lime",
+    p1: { color: "#ff4fd8", image: "../knct4/assets/blob_magenta_happy.png" },
+    p2: { color: "#7cff57", image: "../knct4/assets/blob_lime_grin.png" },
+  },
+];
 
 function IconBadge({ icon: IconComp, label, color, className }) {
   if (!IconComp) {
@@ -579,6 +621,12 @@ function App() {
 
   const [geneCredits, setGeneCredits] = useState(() => safeParseInt(localStorage.getItem(LS_KEYS.geneCredits), 0));
   const bestRun = safeParseInt(localStorage.getItem(LS_KEYS.bestRun), 0);
+  const [knctChipSetId, setKnctChipSetId] = useState(
+    () => localStorage.getItem(LS_KEYS.knctChipSet) || KNCT4_CHIPSETS[0].id
+  );
+  const [knctLastResult, setKnctLastResult] = useState(
+    () => loadJSON(LS_KEYS.knctLastResult, null)
+  );
 
   useEffect(() => {
     let active = true;
@@ -660,7 +708,7 @@ function App() {
     { t: "SYS",  m: "Main lobby online. Awaiting operator." },
   ]);
   const [knctLogLines, setKnctLogLines] = useState([
-    { t: "BOOT", m: "KNCT4 grid initialized." },
+    { t: "BOOT", m: "Connect-4 grid initialized." },
     { t: "SYS", m: "Awaiting link signal." },
   ]);
 
@@ -676,6 +724,7 @@ function App() {
     draws: 0,
     ...loadJSON(LS_KEYS.knctScores, {}),
   }));
+
 
   // Snapshot helper
   const snapshotRef = useRef(null);
@@ -723,9 +772,19 @@ function App() {
   }, [knctScores]);
 
   useEffect(() => {
+    if (knctChipSetId) localStorage.setItem(LS_KEYS.knctChipSet, knctChipSetId);
+  }, [knctChipSetId]);
+
+  useEffect(() => {
+    saveJSON(LS_KEYS.knctLastResult, knctLastResult);
+  }, [knctLastResult]);
+
+
+  useEffect(() => {
     if (screen !== "knct4") return;
-    pushKnctLog("SYS", "KNCT4 lobby handshake complete.");
+    pushKnctLog("SYS", "Connect-4 lobby handshake complete.");
   }, [screen]);
+
 
   function resetKnctMatch(nextStarter = null) {
     const starter = nextStarter ?? knctStarter;
@@ -734,7 +793,7 @@ function App() {
     setKnctWinner(null);
     setKnctPlayer(starter);
     setKnctHoverCol(null);
-    pushKnctLog("SYS", `Match reset. Node ${starter} holds first link.`);
+    pushKnctLog("SYS", `Match reset. Player ${starter} takes first move.`);
   }
 
   function startNextKnctMatch() {
@@ -753,7 +812,7 @@ function App() {
     if (knctWinner) return;
     const row = knct4DropRow(knctBoard, col);
     if (row < 0) {
-      pushKnctLog("ERR", "Column locked: no capacity.");
+      pushKnctLog("ERR", "Column blocked: no capacity.");
       vibrate([0, 60], settings.haptics);
       return;
     }
@@ -768,30 +827,35 @@ function App() {
     const winLine = knct4CheckWin(nextBoard, row, col, knctPlayer);
     if (winLine) {
       setKnctWinner({ player: knctPlayer, cells: winLine });
+      setKnctLastResult({ result: "WIN", player: knctPlayer, at: Date.now() });
       setKnctScores((prev) => ({
         ...prev,
         p1: prev.p1 + (knctPlayer === 1 ? 1 : 0),
         p2: prev.p2 + (knctPlayer === 2 ? 1 : 0),
       }));
-      pushKnctLog("WIN", `Node ${knctPlayer} forged a 4-link chain.`);
+      pushKnctLog("WIN", `Player ${knctPlayer} connected 4.`);
       glitchPulse(0.4);
       vibrate([0, 45, 70, 45, 90], settings.haptics);
+      playTone(880, 180, settings.sound);
       return;
     }
 
     if (nextMoves.length >= KNCT4_ROWS * KNCT4_COLS) {
       setKnctWinner({ player: 0, cells: [] });
+      setKnctLastResult({ result: "DRAW", player: 0, at: Date.now() });
       setKnctScores((prev) => ({ ...prev, draws: prev.draws + 1 }));
       pushKnctLog("SYS", "Grid saturated. Draw logged.");
       vibrate([0, 30, 30, 30], settings.haptics);
+      playTone(420, 160, settings.sound);
       return;
     }
 
     const nextPlayer = knctPlayer === 1 ? 2 : 1;
     setKnctPlayer(nextPlayer);
-    pushKnctLog("SYS", `Node ${nextPlayer} online.`);
+    pushKnctLog("SYS", `Player ${nextPlayer} active.`);
     vibrate([0, 16], settings.haptics);
   }
+
 
   function hasOrgan(id) { return organs.some(o => o.id === id); }
 
@@ -1049,11 +1113,11 @@ function App() {
       : { bonus: 0, met: false, reason: `Alarm was ${extractedAlarm}. Must be < 50.` };
   }
 
-  function endRun(type, reason) {
+  function endRun(type, reason, options = {}) {
     if (phase === "ended") return;
 
     const win = type === "WIN";
-    const extractedAlarm = win ? alarm : null;
+    const extractedAlarm = win ? (options.extractedAlarmOverride ?? alarm) : null;
 
     const baseEarned = computeBaseCredits({ win });
     const contract = computeContractBonus({ win, extractedAlarm: extractedAlarm ?? 999 });
@@ -1339,13 +1403,20 @@ function App() {
   function actionExtract() {
     if (phase !== "await_action") return;
     const st = getSnapshot();
-    if (st.stability < 100) { pushLog("ERR", "Extraction denied: Stability must be ≥ 100."); vibrate([0, 70], settings.haptics); return; }
+    if (st.stability < 100) { pushLog("ERR", "Extraction denied: Stability must be >= 100."); vibrate([0, 70], settings.haptics); return; }
     if (st.contamination >= 100 || st.alarm >= 100) { pushLog("ERR", "Extraction impossible: facility already failed."); return; }
 
-    // Store extraction alarm for stats clarity
-    setRunStats((s) => ({ ...s, extractedWithAlarm: alarm }));
+    let extractedAlarm = st.alarm;
+    if (st.stability >= 120) {
+      extractedAlarm = Math.max(0, st.alarm - 10);
+      pushLog("SYS", "Clean exit: Stability >= 120 reduced Alarm by 10.");
+      setAlarm(extractedAlarm);
+    }
 
-    endRun("WIN", "Extraction successful: Stability ≥ 100 and facility meters remained below 100.");
+    // Store extraction alarm for stats clarity
+    setRunStats((s) => ({ ...s, extractedWithAlarm: extractedAlarm }));
+
+    endRun("WIN", "Extraction successful: Stability >= 100 and facility meters remained below 100.", { extractedAlarmOverride: extractedAlarm });
   }
 
   function actionVent() {
@@ -1494,13 +1565,14 @@ function App() {
    *  UI Helpers
    *  --------------------------- */
   const extractReady = stability >= 100 && contamination < 100 && alarm < 100;
+  const knctChipSet = KNCT4_CHIPSETS.find((set) => set.id === knctChipSetId) || KNCT4_CHIPSETS[0];
   const knctWinningSet = useMemo(() => {
     const entries = knctWinner?.cells || [];
     return new Set(entries.map((cell) => `${cell.row}-${cell.col}`));
   }, [knctWinner]);
   const knctStatusText = knctWinner
-    ? (knctWinner.player === 0 ? "GRID DRAW" : `NODE ${knctWinner.player} CONNECTED`)
-    : `NODE ${knctPlayer} ACTIVE`;
+    ? (knctWinner.player === 0 ? "GRID DRAW" : `PLAYER ${knctWinner.player} CONNECTED`)
+    : `PLAYER ${knctPlayer} TURN`;
   const knctMovesLeft = KNCT4_ROWS * KNCT4_COLS - knctMoves.length;
   const knctMotionStyle = settings.reducedMotion ? { transition: "none" } : null;
   const DnaIcon = iconSet.Dna;
@@ -1562,21 +1634,22 @@ function App() {
                   </button>
                 </div>
 
+
                 <div className="game-card">
                   <div className="flex items-center gap-[1.0vmin]">
                     <div className="game-icon">
                       <IconBadge icon={GamepadIcon} label="GRID" color={PALETTE.blue} className="game-icon-svg" />
                     </div>
                     <div>
-                      <div className="os-title text-[1.3vmin]" style={{ color: PALETTE.blue }}>KNCT4 GRID</div>
-                      <div className="text-[1.2vmin] opacity-80">Link-array duel</div>
+                      <div className="os-title text-[1.3vmin]" style={{ color: PALETTE.blue }}>CONNECT-4</div>
+                      <div className="text-[1.2vmin] opacity-80">Two-player drop duel</div>
                     </div>
                   </div>
                   <div className="mt-[1.0vmin] text-[1.25vmin] opacity-85">
-                    Drop nodes, forge a 4-link chain, and outmaneuver your rival operator.
+                    Drop chips, build a 4-in-a-row chain, and block your rival.
                   </div>
                   <button className="xg-btn w-full mt-[1.2vmin]" onClick={() => setScreen("knct4")}>
-                    Launch KNCT4
+                    Launch Connect-4
                   </button>
                 </div>
               </div>
@@ -1674,6 +1747,11 @@ function App() {
             label="Haptics (vibration)"
             value={!!settings.haptics}
             onChange={(v) => persistSettings({ haptics: v })}
+          />
+          <Switch
+            label="Sound (UI tones)"
+            value={!!settings.sound}
+            onChange={(v) => persistSettings({ sound: v })}
           />
           <Switch
             label="Reduced Motion (cuts animations)"
@@ -2018,7 +2096,7 @@ function App() {
       <div className="grid grid-cols-1 md:grid-cols-[1.15fr_0.85fr] gap-[1.6vmin] min-h-0">
         <div className="panel p-[2vmin] min-h-0 flex flex-col">
           <div className="flex items-center justify-between">
-            <div className="os-title text-[1.8vmin]" style={{ color: PALETTE.blue }}>KNCT4 // LINK ARRAY</div>
+            <div className="os-title text-[1.8vmin]" style={{ color: PALETTE.blue }}>CONNECT-4 // DROP GRID</div>
             <div className="text-[1.25vmin] opacity-80">
               Status <span style={{ color: knctWinner ? PALETTE.green : PALETTE.blue }}>{knctStatusText}</span>{" "}
               | Moves Left <span style={{ color: PALETTE.green }}>{knctMovesLeft}</span>
@@ -2028,16 +2106,16 @@ function App() {
 
           <div className="grid grid-cols-1 md:grid-cols-4 gap-[1.0vmin] text-[1.2vmin]">
             <div className="panel p-[1.0vmin] flex items-center gap-[0.8vmin]">
-              <IconBadge icon={CircleDotIcon} label="NODE" color={PALETTE.blue} className="game-icon-svg" />
-              <div>Active: <span style={{ color: PALETTE.blue }}>Node {knctPlayer}</span></div>
+              <IconBadge icon={CircleDotIcon} label="TURN" color={PALETTE.blue} className="game-icon-svg" />
+              <div>Active: <span style={{ color: PALETTE.blue }}>Player {knctPlayer}</span></div>
             </div>
             <div className="panel p-[1.0vmin] flex items-center gap-[0.8vmin]">
-              <IconBadge icon={ActivityIcon} label="LINK" color={PALETTE.green} className="game-icon-svg" />
-              <div>Starter: <span style={{ color: PALETTE.green }}>Node {knctStarter}</span></div>
+              <IconBadge icon={ActivityIcon} label="START" color={PALETTE.green} className="game-icon-svg" />
+              <div>Starter: <span style={{ color: PALETTE.green }}>Player {knctStarter}</span></div>
             </div>
             <div className="panel p-[1.0vmin] flex items-center gap-[0.8vmin]">
               <IconBadge icon={SparklesIcon} label="CHAIN" color={PALETTE.green} className="game-icon-svg" />
-              <div>Chain Target: <span style={{ color: PALETTE.green }}>4</span></div>
+              <div>Connect: <span style={{ color: PALETTE.green }}>4</span></div>
             </div>
             <div className="panel p-[1.0vmin] flex items-center gap-[0.8vmin]">
               <IconBadge icon={LayersIcon} label="GRID" color={PALETTE.blue} className="game-icon-svg" />
@@ -2062,6 +2140,17 @@ function App() {
                       : cell === 2
                         ? "knct-disc knct-disc--p2"
                         : "knct-disc knct-disc--empty";
+                    const discStyle = cell === 1
+                      ? {
+                        backgroundColor: knctChipSet.p1.color,
+                        backgroundImage: knctChipSet.p1.image ? `url(${knctChipSet.p1.image})` : "none",
+                      }
+                      : cell === 2
+                        ? {
+                          backgroundColor: knctChipSet.p2.color,
+                          backgroundImage: knctChipSet.p2.image ? `url(${knctChipSet.p2.image})` : "none",
+                        }
+                        : null;
 
                     return (
                       <button
@@ -2071,12 +2160,12 @@ function App() {
                         onPointerEnter={() => setKnctHoverCol(cIdx)}
                         onClick={() => handleKnctDrop(cIdx)}
                         disabled={!!knctWinner}
-                        aria-label={`Drop node in column ${cIdx + 1}`}
+                        aria-label={`Drop chip in column ${cIdx + 1}`}
                         style={knctMotionStyle}
                       >
                         <span
                           className={`${discClass} ${isWin ? "knct-disc--win" : ""}`}
-                          style={knctMotionStyle}
+                          style={{ ...knctMotionStyle, ...discStyle }}
                         />
                       </button>
                     );
@@ -2086,12 +2175,23 @@ function App() {
             </div>
           </div>
 
+          {knctWinner && (
+            <div className="panel mt-[1.4vmin] p-[1.2vmin]">
+              <div className="os-title text-[1.35vmin]" style={{ color: knctWinner.player === 0 ? "rgba(255,140,0,0.9)" : PALETTE.green }}>
+                {knctWinner.player === 0 ? "DRAW" : `PLAYER ${knctWinner.player} WINS`}
+              </div>
+              <div className="mt-[0.6vmin] text-[1.2vmin] opacity-80">
+                {knctWinner.player === 0 ? "Board full. No winner." : "4 in a row confirmed."}
+              </div>
+            </div>
+          )}
+
           <div className="mt-[1.6vmin] grid grid-cols-2 md:grid-cols-4 gap-[1.0vmin]">
             <button className="xg-btn" onClick={() => resetKnctMatch()} disabled={knctMoves.length === 0}>
               Reset Match
             </button>
             <button className="xg-btn" onClick={startNextKnctMatch}>
-              Next Match
+              New Match
             </button>
             <button className="xg-btn" onClick={() => setScreen("lobby")}>
               Back to Lobby
@@ -2101,19 +2201,19 @@ function App() {
             </button>
           </div>
           <div className="mt-[1.0vmin] text-[1.2vmin] opacity-70">
-            Tap any column to deploy a node. First operator to link four nodes wins the grid.
+            Tap any column to drop a chip. First player to connect four wins.
           </div>
         </div>
 
         <div className="panel-2 p-[2vmin] min-h-0 flex flex-col">
-          <div className="os-title text-[1.8vmin]" style={{ color: PALETTE.green }}>KNCT4 CONSOLE</div>
+          <div className="os-title text-[1.8vmin]" style={{ color: PALETTE.green }}>CONNECT-4 CONSOLE</div>
           <div className="hr-scan my-[1.2vmin]" />
 
           <div className="panel p-[1.6vmin] mb-[1.2vmin]">
             <div className="os-title text-[1.35vmin]" style={{ color: PALETTE.blue }}>SCORE CORE</div>
             <div className="mt-[0.8vmin] text-[1.3vmin] opacity-85">
-              Node 1 Wins: <span style={{ color: PALETTE.blue }}>{knctScores.p1}</span><br />
-              Node 2 Wins: <span style={{ color: PALETTE.green }}>{knctScores.p2}</span><br />
+              Player 1 Wins: <span style={{ color: PALETTE.blue }}>{knctScores.p1}</span><br />
+              Player 2 Wins: <span style={{ color: PALETTE.green }}>{knctScores.p2}</span><br />
               Draws: <span style={{ color: "rgba(255,140,0,0.88)" }}>{knctScores.draws}</span>
             </div>
             <button className="xg-btn w-full mt-[1.0vmin]" onClick={resetKnctScores}>
@@ -2122,9 +2222,55 @@ function App() {
           </div>
 
           <div className="panel p-[1.6vmin] mb-[1.2vmin]">
+            <div className="os-title text-[1.35vmin]" style={{ color: PALETTE.blue }}>CHIP SET</div>
+            <div className="knct-chipset-grid mt-[0.8vmin]">
+              {KNCT4_CHIPSETS.map((set) => (
+                <button
+                  key={set.id}
+                  type="button"
+                  className={`knct-chipset ${knctChipSetId === set.id ? "knct-chipset--active" : ""}`}
+                  onClick={() => setKnctChipSetId(set.id)}
+                >
+                  <span className="knct-chipset-label">{set.label}</span>
+                  <span className="knct-chipset-swatches">
+                    <span
+                      className="knct-chipset-swatch"
+                      style={{
+                        backgroundColor: set.p1.color,
+                        backgroundImage: set.p1.image ? `url(${set.p1.image})` : "none",
+                      }}
+                    />
+                    <span
+                      className="knct-chipset-swatch"
+                      style={{
+                        backgroundColor: set.p2.color,
+                        backgroundImage: set.p2.image ? `url(${set.p2.image})` : "none",
+                      }}
+                    />
+                  </span>
+                </button>
+              ))}
+            </div>
+            <div className="mt-[0.8vmin] text-[1.15vmin] opacity-75">
+              Exactly two players active per match. Chip set persists across restarts.
+            </div>
+          </div>
+
+          {knctLastResult && (
+            <div className="panel p-[1.6vmin] mb-[1.2vmin]">
+              <div className="os-title text-[1.35vmin]" style={{ color: PALETTE.blue }}>LAST RESULT</div>
+              <div className="mt-[0.8vmin] text-[1.25vmin] opacity-85">
+                {knctLastResult.result === "DRAW"
+                  ? "Draw logged."
+                  : `Player ${knctLastResult.player} won the last match.`}
+              </div>
+            </div>
+          )}
+
+          <div className="panel p-[1.6vmin] mb-[1.2vmin]">
             <div className="os-title text-[1.35vmin]" style={{ color: PALETTE.blue }}>TACTICS</div>
             <div className="mt-[0.8vmin] text-[1.25vmin] opacity-85">
-              Control the center columns, block a rival’s 3-link, and pivot to diagonal chains.
+              Control the center columns, block 3-in-a-row threats, and pivot to diagonals.
             </div>
           </div>
 
@@ -2167,7 +2313,7 @@ function App() {
 
           <div className="flex items-center gap-[1.0vmin]">
             {navButton("lobby", "Lobby")}
-            {navButton("knct4", "KNCT4")}
+            {navButton("knct4", "Connect-4")}
             {navButton("store", "Store")}
             {navButton("settings", "Settings")}
             {screen === "game" ? navButton("game", "Run") : null}
@@ -2184,7 +2330,7 @@ function App() {
 
         <div className="panel px-[2vmin] py-[1.4vmin] flex items-center justify-between">
           <div className="text-[1.2vmin] opacity-80">
-            BUILD: XG-OS / Lobby + Store + Settings + Run + KNCT4 / React18 + Tailwind + GSAP + Babel
+            BUILD: XG-OS / Lobby + Store + Settings + Run + Connect-4 / React18 + Tailwind + GSAP + Babel
           </div>
           <div className="text-[1.2vmin] opacity-80">
             WIN: Extract with Stability ≥ 100 | FAIL: Contam/Alarm reach 100 | CONTRACT: Quiet Extraction (Alarm &lt; 50)
