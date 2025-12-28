@@ -2049,7 +2049,10 @@ function App() {
                     <div className="text-[1.1vmin] opacity-85">
                       Room <span style={{ color: PALETTE.blue }}>{mpStatus.roomCode}</span> | Role <span style={{ color: PALETTE.green }}>{mpStatus.role}</span>
                     </div>
-                    <button className="xg-btn w-full mt-[0.6vmin]" onClick={() => leaveRoom("manual")}>Leave Room</button>
+                    <div className="mp-row mt-[0.6vmin]">
+                      <button className="xg-btn" onClick={() => copyRoomCode(mpStatus.roomCode)}>Copy Code</button>
+                      <button className="xg-btn" onClick={() => leaveRoom("manual")}>Leave Room</button>
+                    </div>
                   </div>
                 )}
               </div>
@@ -2372,7 +2375,10 @@ function App() {
               <div className="mt-[0.4vmin] text-[1.2vmin] opacity-80">
                 Opponent: <span style={{ color: PALETTE.green }}>{raceOpponent.status}</span> ({raceOpponent.lastEvent})
               </div>
-              <button className="xg-btn w-full mt-[0.8vmin]" onClick={() => leaveRoom("manual")}>Leave Room</button>
+              <div className="mp-row mt-[0.8vmin]">
+                <button className="xg-btn" onClick={() => copyRoomCode(mpStatus.roomCode)}>Copy Code</button>
+                <button className="xg-btn" onClick={() => leaveRoom("manual")}>Leave Room</button>
+              </div>
             </div>
           )}
 
@@ -2403,6 +2409,14 @@ function App() {
         <div className="panel-2 p-[2vmin] min-h-0 flex flex-col">
           <div className="os-title text-[1.8vmin]" style={{ color: PALETTE.green }}>EXTRACTION CONSOLE</div>
           <div className="hr-scan my-[1.2vmin]" />
+
+          {mpStatus.connected && mpStatus.mode === "race" && (
+            <div className="panel p-[1.2vmin] mb-[1.2vmin]">
+              <div className="os-title text-[1.25vmin]" style={{ color: PALETTE.blue }}>RACE HUD</div>
+              <div className="mt-[0.6vmin] text-[1.2vmin] opacity-85">You: Player {mpStatus.playerId} | Opponent: {raceOpponent.status}</div>
+              <div className="mt-[0.4vmin] text-[1.15vmin] opacity-80">Last: {raceOpponent.lastEvent}</div>
+            </div>
+          )}
 
           <div className="panel p-[1.6vmin] mb-[1.2vmin]">
             <div className="os-title text-[1.35vmin]" style={{ color: PALETTE.blue }}>LAST DROP</div>
@@ -2521,6 +2535,10 @@ function App() {
             <div className="panel p-[1.0vmin] mb-[1.0vmin]">
               <div className="text-[1.15vmin] opacity-85">
                 Room <span style={{ color: PALETTE.blue }}>{mpStatus.roomCode}</span> | Role <span style={{ color: PALETTE.green }}>{mpStatus.role}</span> | You are Player {mpStatus.playerId}
+              </div>
+              <div className="mp-row mt-[0.6vmin]">
+                <button className="xg-btn" onClick={() => copyRoomCode(mpStatus.roomCode)}>Copy Code</button>
+                <button className="xg-btn" onClick={() => leaveRoom("manual")}>Leave Room</button>
               </div>
             </div>
           )}
@@ -2767,6 +2785,19 @@ function App() {
           </div>
         </div>
       </div>
+      {mpStatus.error === "Room full" && (
+        <div className="modal" style={{ position: "fixed", inset: 0, zIndex: 85, display: "grid", placeItems: "center", background: "rgba(0,0,0,0.68)", backdropFilter: "blur(0.6vmin)" }}>
+          <div className="modal-card">
+            <div className="os-title text-[1.6vmin]" style={{ color: "rgba(255,140,0,0.9)" }}>ROOM FULL</div>
+            <div className="hr-scan my-[1.2vmin]" />
+            <div className="text-[1.25vmin] opacity-85">That room already has 2 players. Ask the host for a new code.</div>
+            <div className="panel__actions">
+              <button className="xg-btn" onClick={() => setMpStatus((s) => ({ ...s, error: null }))}>OK</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {mpJoinModal.open && (
         <div className="modal" style={{ position: "fixed", inset: 0, zIndex: 80, display: "grid", placeItems: "center", background: "rgba(0,0,0,0.68)", backdropFilter: "blur(0.6vmin)" }}>
           <div className="modal-card">

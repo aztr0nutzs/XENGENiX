@@ -1,6 +1,8 @@
 :root{
   --xg-green: #39FF14;
   --xg-blue: #00FFFF;
+  --xg-purple: #c43bff;
+  --xg-cyan: #20f6ff;
 
   --bg0: #030308;
   --bg1: rgba(0,0,0,0.55);
@@ -24,7 +26,8 @@ html, body {
               linear-gradient(180deg, #010105 0%, #030308 100%);
   color: rgba(233,255,251,0.92);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 /* CRT Layer */
@@ -90,6 +93,87 @@ html, body {
   box-shadow:
     0 0 calc(2.2vmin * var(--ui-intensity)) rgba(57,255,20,0.10),
     inset 0 0 calc(1.4vmin * var(--ui-intensity)) rgba(0,255,255,0.05);
+}
+
+/* Lobby vivid treatment */
+.lobby-screen{
+  position: relative;
+  isolation: isolate;
+}
+.lobby-screen::before{
+  content:"";
+  position: absolute;
+  inset: -4vmin;
+  background:
+    radial-gradient(80vmin 60vmin at 10% 10%, rgba(32,246,255,0.18), transparent 60%),
+    radial-gradient(70vmin 50vmin at 90% 20%, rgba(196,59,255,0.18), transparent 62%),
+    url("./xengen1.jpg");
+  background-size: cover;
+  background-position: center;
+  filter: saturate(1.2) contrast(1.05);
+  opacity: 0.20;
+  z-index: 0;
+  pointer-events: none;
+}
+.lobby-screen::after{
+  content:"";
+  position: absolute;
+  inset: 6vmin;
+  background:
+    linear-gradient(120deg, rgba(0,255,255,0.12), rgba(196,59,255,0.12)),
+    url("./xengen2.jpg");
+  background-size: cover;
+  background-position: center;
+  mix-blend-mode: screen;
+  opacity: 0.18;
+  z-index: 0;
+  pointer-events: none;
+}
+.lobby-hero{
+  position: relative;
+  z-index: 1;
+  border: 1px solid rgba(32,246,255,0.35);
+  box-shadow:
+    0 0 calc(2.6vmin * var(--ui-intensity)) rgba(32,246,255,0.18),
+    0 0 calc(3.4vmin * var(--ui-intensity)) rgba(196,59,255,0.15),
+    inset 0 0 calc(1.6vmin * var(--ui-intensity)) rgba(0,0,0,0.55);
+}
+.lobby-accent{
+  position: relative;
+  z-index: 1;
+}
+.lobby-accent::before{
+  content:"";
+  position:absolute;
+  inset: -0.6vmin;
+  border-radius: 1.9vmin;
+  background: linear-gradient(120deg, rgba(0,255,255,0.25), rgba(196,59,255,0.25));
+  z-index:-1;
+  opacity: 0.55;
+  filter: blur(0.2vmin);
+}
+.lobby-screen .panel,
+.lobby-screen .panel-2{
+  border-color: rgba(32,246,255,0.32);
+  box-shadow:
+    0 0 calc(2.6vmin * var(--ui-intensity)) rgba(32,246,255,0.16),
+    0 0 calc(2.4vmin * var(--ui-intensity)) rgba(196,59,255,0.12),
+    inset 0 0 calc(1.6vmin * var(--ui-intensity)) rgba(0,0,0,0.55);
+}
+.lobby-banner{
+  position: relative;
+  overflow: hidden;
+}
+.lobby-banner::after{
+  content:"";
+  position:absolute;
+  inset:0;
+  background: url("./xengen3.jpg");
+  background-size: cover;
+  background-position: center;
+  opacity: 0.12;
+  mix-blend-mode: screen;
+  pointer-events: none;
 }
 
 .game-card{
@@ -437,6 +521,61 @@ html, body {
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
+}
+
+/* Multiplayer + Debug */
+.banner-offline{
+  position: sticky;
+  top: 0;
+  z-index: 90;
+  padding: 0.9vmin 1.2vmin;
+  border-bottom: 1px solid rgba(0,255,255,0.25);
+  background: linear-gradient(90deg, rgba(0,255,255,0.12), rgba(196,59,255,0.12));
+  color: rgba(233,255,251,0.92);
+  font-size: 1.2vmin;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.mp-card{
+  border: 1px solid rgba(196,59,255,0.28);
+  border-radius: 1.6vmin;
+  padding: 1.6vmin;
+  background: rgba(0,0,0,0.35);
+  box-shadow: 0 0 calc(1.8vmin * var(--ui-intensity)) rgba(196,59,255,0.14);
+}
+.mp-row{
+  display: flex;
+  gap: 0.8vmin;
+  flex-wrap: wrap;
+}
+.mp-badge{
+  font-size: 1.0vmin;
+  padding: 0.5vmin 0.8vmin;
+  border-radius: 0.9vmin;
+  border: 1px solid rgba(0,255,255,0.22);
+  background: rgba(0,0,0,0.32);
+}
+.debug-panel{
+  position: fixed;
+  right: 1.6vmin;
+  bottom: 1.6vmin;
+  z-index: 95;
+  min-width: 220px;
+  max-width: 42vw;
+  padding: 1.2vmin;
+  border-radius: 1.2vmin;
+  border: 1px solid rgba(0,255,255,0.22);
+  background: rgba(0,0,0,0.55);
+  box-shadow:
+    0 0 calc(1.8vmin * var(--ui-intensity)) rgba(0,255,255,0.12),
+    0 0 calc(1.6vmin * var(--ui-intensity)) rgba(196,59,255,0.10);
+  font-size: 1.1vmin;
+}
+.debug-panel .label{
+  opacity: 0.7;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-size: 0.95vmin;
 }
 .knct-disc--empty{
   background: rgba(0,0,0,0.55);

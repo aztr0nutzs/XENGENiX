@@ -18,6 +18,32 @@ function clamp(n, a, b) { return Math.max(a, Math.min(b, n)); }
 function roll(p) { return Math.random() < p; }
 function safeParseInt(v, fallback) { const n = parseInt(v, 10); return Number.isFinite(n) ? n : fallback; }
 
+const SUPABASE_URL = window.SUPABASE_URL || "";
+const SUPABASE_ANON_KEY = window.SUPABASE_ANON_KEY || "";
+const DEVICE_ID_KEY = "xg_device_id_v1";
+
+function getDeviceId() {
+  let id = localStorage.getItem(DEVICE_ID_KEY);
+  if (!id) {
+    id = `dev_${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36).slice(-4)}`;
+    localStorage.setItem(DEVICE_ID_KEY, id);
+  }
+  return id;
+}
+
+function makeRoomCode() {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let out = "";
+  for (let i = 0; i < 6; i += 1) {
+    out += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return out;
+}
+
+function normalizeRoomCode(code) {
+  return (code || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8);
+}
+
 function vibrate(pattern, enabled) {
   try { if (enabled && window?.navigator?.vibrate) window.navigator.vibrate(pattern); } catch (_) {}
 }
@@ -615,6 +641,34 @@ function App() {
   const [screen, setScreen] = useState("lobby");
   const [iconSet, setIconSet] = useState({});
 
+  const supabaseClient = useMemo(() => {
+    if (!SUPABASE_URL || !SUPABASE_ANON_KEY || !window.supabase) return null;
+    try {
+      return window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+        auth: { persistSession: true, autoRefreshToken: true },
+      });
+    } catch (_) {
+      return null;
+    }
+  }, []);
+
+  const [mpStatus, setMpStatus] = useState({
+    configured: !!supabaseClient,
+    connected: false,
+    mode: null,
+    roomCode: null,
+    role: null,
+    playerId: null,
+    lastEvent: "-",
+    error: null,
+    presence: 0,
+  });
+  const [mpUserId, setMpUserId] = useState(null);
+  const mpChannelRef = useRef(null);
+  const [mpJoinModal, setMpJoinModal] = useState({ open: false, mode: null, code: "" });
+  const [raceOpponent, setRaceOpponent] = useState({ status: "IDLE", lastEvent: "-", winner: null });
+  const [offlineBanner, setOfflineBanner] = useState(!supabaseClient);
+
   // Persistent settings/upgrades
   const [settings, setSettings] = useState(() => ({ ...DEFAULT_SETTINGS, ...loadJSON(LS_KEYS.settings, {}) }));
   const [upgrades, setUpgrades] = useState(() => ({ ...DEFAULT_UPGRADES, ...loadJSON(LS_KEYS.upgrades, {}) }));
@@ -639,6 +693,34 @@ function App() {
       });
     return () => { active = false; };
   }, []);
+
+  useEffect(() => {
+    if (!supabaseClient) {
+      setMpStatus((s) => ({ ...s, configured: false, connected: false }));
+      setOfflineBanner(true);
+      return;
+    }
+    setMpStatus((s) => ({ ...s, configured: true }));
+    setOfflineBanner(false);
+    supabaseClient.auth.getSession().then(({ data }) => {
+      if (data?.session?.user?.id) setMpUserId(data.session.user.id);
+    });
+    supabaseClient.auth.signInAnonymously().then(({ data, error }) => {
+      if (error) {
+        setMpStatus((s) => ({ ...s, error: error.message }));
+        return;
+      }
+      if (data?.user?.id) setMpUserId(data.user.id);
+    });
+  }, [supabaseClient]);
+
+  useEffect(() => {
+    return () => {
+      if (mpChannelRef.current && supabaseClient) {
+        supabaseClient.removeChannel(mpChannelRef.current);
+      }
+    };
+  }, [supabaseClient]);
 
   // Apply UI intensity to CSS variable
   useEffect(() => {
@@ -747,6 +829,192 @@ function App() {
     });
   }
 
+  function setMpEvent(msg) {
+    setMpStatus((s) => ({ ...s, lastEvent: msg }));
+  }
+
+  function copyRoomCode(code) {
+    if (!code) return;
+    try {
+      if (navigator?.clipboard?.writeText) {
+        navigator.clipboard.writeText(code);
+      } else {
+        window.prompt("Copy invite code", code);
+      }
+      setMpEvent("code-copied");
+    } catch (_) {
+      window.prompt("Copy invite code", code);
+    }
+  }
+
+  function leaveRoom(reason = null) {
+    if (mpChannelRef.current && supabaseClient) {
+      supabaseClient.removeChannel(mpChannelRef.current);
+    }
+    mpChannelRef.current = null;
+    setMpStatus((s) => ({
+      ...s,
+      connected: false,
+      mode: null,
+      roomCode: null,
+      role: null,
+      playerId: null,
+      presence: 0,
+      error: reason || null,
+      lastEvent: reason ? `left: ${reason}` : s.lastEvent,
+    }));
+    setRaceOpponent({ status: "IDLE", lastEvent: "-", winner: null });
+  }
+
+  function mpBroadcast(event, payload) {
+    const ch = mpChannelRef.current;
+    if (!ch) return;
+    ch.send({ type: "broadcast", event, payload });
+    setMpEvent(event);
+  }
+
+  function broadcastKnctState(reason = "state", override = {}) {
+    const payload = {
+      board: knctBoard,
+      player: knctPlayer,
+      starter: knctStarter,
+      moves: knctMoves,
+      winner: knctWinner,
+      scores: knctScores,
+      chipSetId: knctChipSetId,
+      lastResult: knctLastResult,
+      reason,
+      ...override,
+    };
+    mpBroadcast("knct4-state", payload);
+  }
+
+  function applyKnctSnapshot(payload) {
+    if (!payload) return;
+    setKnctBoard(payload.board || makeKnct4Board());
+    setKnctPlayer(payload.player || 1);
+    setKnctStarter(payload.starter || 1);
+    setKnctMoves(payload.moves || []);
+    setKnctWinner(payload.winner || null);
+    setKnctScores(payload.scores || { p1: 0, p2: 0, draws: 0 });
+    if (payload.chipSetId) setKnctChipSetId(payload.chipSetId);
+    if (payload.lastResult) setKnctLastResult(payload.lastResult);
+    setKnctHoverCol(null);
+  }
+
+  function handleRaceEvent(payload) {
+    if (!payload) return;
+    if (payload.type === "status") {
+      setRaceOpponent((s) => ({ ...s, status: payload.status || s.status, lastEvent: payload.msg || s.lastEvent }));
+    } else if (payload.type === "win") {
+      setRaceOpponent((s) => ({ ...s, status: "WIN", winner: payload.playerId || "OPP", lastEvent: payload.msg || "Opponent extracted" }));
+    }
+  }
+
+  function connectRoom(mode, code, role) {
+    if (!supabaseClient) {
+      setOfflineBanner(true);
+      setMpStatus((s) => ({ ...s, error: "Supabase not configured" }));
+      return;
+    }
+    const roomCode = normalizeRoomCode(code);
+    if (!roomCode) {
+      setMpStatus((s) => ({ ...s, error: "Invalid room code" }));
+      return;
+    }
+    leaveRoom();
+
+    const channel = supabaseClient.channel(`xg-${mode}-${roomCode}`, {
+      config: { presence: { key: mpUserId || getDeviceId() } },
+    });
+    mpChannelRef.current = channel;
+    setMpStatus((s) => ({
+      ...s,
+      mode,
+      roomCode,
+      role,
+      playerId: role === "host" ? 1 : 2,
+      connected: false,
+      error: null,
+      presence: 0,
+    }));
+    setRaceOpponent({ status: "WAITING", lastEvent: "-", winner: null });
+
+    channel.on("presence", { event: "sync" }, () => {
+      const state = channel.presenceState();
+      const count = Object.keys(state || {}).length;
+      setMpStatus((s) => ({ ...s, presence: count }));
+      if (count > 2) {
+        leaveRoom("Room full");
+      }
+    });
+
+    channel.on("broadcast", { event: "hello" }, ({ payload }) => {
+      if (role === "host" && mode === "knct4") {
+        broadcastKnctState("sync");
+      }
+      if (role === "host" && mode === "race") {
+        mpBroadcast("race-event", { type: "status", msg: "Host ready", playerId: 1 });
+      }
+      setMpEvent(`hello:${payload?.from || "peer"}`);
+    });
+
+    channel.on("broadcast", { event: "knct4-move" }, ({ payload }) => {
+      if (mode === "knct4" && role === "host" && payload?.col !== undefined) {
+        handleKnctDrop(payload.col, { remote: true });
+        setMpEvent("knct4-move");
+      }
+    });
+
+    channel.on("broadcast", { event: "knct4-state" }, ({ payload }) => {
+      if (mode === "knct4" && role === "guest") {
+        applyKnctSnapshot(payload);
+        setMpEvent(payload?.reason || "knct4-state");
+      }
+    });
+
+    channel.on("broadcast", { event: "race-event" }, ({ payload }) => {
+      if (mode === "race") {
+        handleRaceEvent(payload);
+        setMpEvent(payload?.type || "race-event");
+      }
+    });
+
+    channel.subscribe((status) => {
+      if (status === "SUBSCRIBED") {
+        channel.track({ joinedAt: Date.now(), role });
+        setMpStatus((s) => ({ ...s, connected: true }));
+        setMpEvent("connected");
+        if (role === "guest") {
+          mpBroadcast("hello", { from: role });
+        }
+        if (role === "host" && mode === "knct4") {
+          broadcastKnctState("sync");
+        }
+        if (role === "host" && mode === "race") {
+          mpBroadcast("race-event", { type: "status", status: "HOST_READY", msg: "Host ready", playerId: 1 });
+        }
+      }
+    });
+  }
+
+  function createRoom(mode) {
+    const code = makeRoomCode();
+    connectRoom(mode, code, "host");
+    if (mode === "knct4") {
+      setScreen("knct4");
+      resetKnctMatch(1);
+    } else if (mode === "race") {
+      setScreen("game");
+    }
+  }
+
+  function joinRoom(mode, code) {
+    connectRoom(mode, code, "guest");
+    if (mode === "knct4") setScreen("knct4");
+    if (mode === "race") setScreen("game");
+  }
+
   function glitchPulse(duration = 0.35) {
     if (!glitchHostRef.current || settings.reducedMotion) return;
     gsap.killTweensOf(glitchHostRef.current);
@@ -787,29 +1055,75 @@ function App() {
 
 
   function resetKnctMatch(nextStarter = null) {
+    const isMp = mpStatus.connected && mpStatus.mode === "knct4";
+    if (isMp && mpStatus.role !== "host") {
+      pushKnctLog("ERR", "Host only: reset match.");
+      return;
+    }
     const starter = nextStarter ?? knctStarter;
-    setKnctBoard(makeKnct4Board());
+    const newBoard = makeKnct4Board();
+    setKnctBoard(newBoard);
     setKnctMoves([]);
     setKnctWinner(null);
     setKnctPlayer(starter);
     setKnctHoverCol(null);
     pushKnctLog("SYS", `Match reset. Player ${starter} takes first move.`);
+    if (isMp && mpStatus.role === "host") {
+      broadcastKnctState("reset", { board: newBoard, player: starter, moves: [], winner: null });
+    }
   }
 
   function startNextKnctMatch() {
+    const isMp = mpStatus.connected && mpStatus.mode === "knct4";
+    if (isMp && mpStatus.role !== "host") {
+      pushKnctLog("ERR", "Host only: new match.");
+      return;
+    }
     const nextStarter = knctStarter === 1 ? 2 : 1;
     setKnctStarter(nextStarter);
     resetKnctMatch(nextStarter);
   }
 
   function resetKnctScores() {
+    const isMp = mpStatus.connected && mpStatus.mode === "knct4";
+    if (isMp && mpStatus.role !== "host") {
+      pushKnctLog("ERR", "Host only: reset scores.");
+      return;
+    }
     setKnctScores({ p1: 0, p2: 0, draws: 0 });
     pushKnctLog("SYS", "Score cache cleared.");
     vibrate([0, 40], settings.haptics);
+    if (isMp && mpStatus.role === "host") broadcastKnctState("scores-reset", { scores: { p1: 0, p2: 0, draws: 0 } });
   }
 
-  function handleKnctDrop(col) {
+  function updateKnctChipSet(id) {
+    const isMp = mpStatus.connected && mpStatus.mode === "knct4";
+    if (isMp && mpStatus.role !== "host") {
+      pushKnctLog("ERR", "Host only: chip set.");
+      return;
+    }
+    setKnctChipSetId(id);
+    if (isMp && mpStatus.role === "host") broadcastKnctState("chipset", { chipSetId: id });
+  }
+
+  function handleKnctDrop(col, opts = {}) {
+    const { remote = false } = opts;
     if (knctWinner) return;
+
+    const isMp = mpStatus.connected && mpStatus.mode === "knct4";
+    if (isMp && !remote) {
+      if (knctPlayer !== mpStatus.playerId) {
+        pushKnctLog("ERR", "Not your turn.");
+        vibrate([0, 40], settings.haptics);
+        return;
+      }
+      if (mpStatus.role === "guest") {
+        mpBroadcast("knct4-move", { col });
+        pushKnctLog("SYS", "Move sent.");
+        return;
+      }
+    }
+
     const row = knct4DropRow(knctBoard, col);
     if (row < 0) {
       pushKnctLog("ERR", "Column blocked: no capacity.");
@@ -826,27 +1140,53 @@ function App() {
 
     const winLine = knct4CheckWin(nextBoard, row, col, knctPlayer);
     if (winLine) {
-      setKnctWinner({ player: knctPlayer, cells: winLine });
-      setKnctLastResult({ result: "WIN", player: knctPlayer, at: Date.now() });
-      setKnctScores((prev) => ({
-        ...prev,
-        p1: prev.p1 + (knctPlayer === 1 ? 1 : 0),
-        p2: prev.p2 + (knctPlayer === 2 ? 1 : 0),
-      }));
+      const nextScores = {
+        ...knctScores,
+        p1: knctScores.p1 + (knctPlayer === 1 ? 1 : 0),
+        p2: knctScores.p2 + (knctPlayer === 2 ? 1 : 0),
+      };
+      const nextWinner = { player: knctPlayer, cells: winLine };
+      const nextLast = { result: "WIN", player: knctPlayer, at: Date.now() };
+      setKnctWinner(nextWinner);
+      setKnctLastResult(nextLast);
+      setKnctScores(nextScores);
       pushKnctLog("WIN", `Player ${knctPlayer} connected 4.`);
       glitchPulse(0.4);
       vibrate([0, 45, 70, 45, 90], settings.haptics);
       playTone(880, 180, settings.sound);
+      if (isMp && mpStatus.role === "host") {
+        broadcastKnctState("win", {
+          board: nextBoard,
+          player: knctPlayer,
+          moves: nextMoves,
+          winner: nextWinner,
+          scores: nextScores,
+          lastResult: nextLast,
+        });
+      }
       return;
     }
 
     if (nextMoves.length >= KNCT4_ROWS * KNCT4_COLS) {
-      setKnctWinner({ player: 0, cells: [] });
-      setKnctLastResult({ result: "DRAW", player: 0, at: Date.now() });
-      setKnctScores((prev) => ({ ...prev, draws: prev.draws + 1 }));
+      const nextWinner = { player: 0, cells: [] };
+      const nextLast = { result: "DRAW", player: 0, at: Date.now() };
+      const nextScores = { ...knctScores, draws: knctScores.draws + 1 };
+      setKnctWinner(nextWinner);
+      setKnctLastResult(nextLast);
+      setKnctScores(nextScores);
       pushKnctLog("SYS", "Grid saturated. Draw logged.");
       vibrate([0, 30, 30, 30], settings.haptics);
       playTone(420, 160, settings.sound);
+      if (isMp && mpStatus.role === "host") {
+        broadcastKnctState("draw", {
+          board: nextBoard,
+          player: knctPlayer,
+          moves: nextMoves,
+          winner: nextWinner,
+          scores: nextScores,
+          lastResult: nextLast,
+        });
+      }
       return;
     }
 
@@ -854,6 +1194,14 @@ function App() {
     setKnctPlayer(nextPlayer);
     pushKnctLog("SYS", `Player ${nextPlayer} active.`);
     vibrate([0, 16], settings.haptics);
+    if (isMp && mpStatus.role === "host") {
+      broadcastKnctState("move", {
+        board: nextBoard,
+        player: nextPlayer,
+        moves: nextMoves,
+        winner: null,
+      });
+    }
   }
 
 
@@ -1155,6 +1503,14 @@ function App() {
       else pushLog("CONTRACT", `${PRIMARY_CONTRACT.title} missed: ${contract.reason}`);
     }
 
+    if (mpStatus.connected && mpStatus.mode === "race") {
+      if (win) {
+        mpBroadcast("race-event", { type: "win", msg: "Extracted", playerId: mpStatus.playerId });
+      } else {
+        mpBroadcast("race-event", { type: "status", status: "FAILED", msg: "Run failed", playerId: mpStatus.playerId });
+      }
+    }
+
     glitchPulse(0.55);
     vibrate(win ? [0, 40, 80, 40, 120] : [0, 140, 60, 140], settings.haptics);
   }
@@ -1212,6 +1568,10 @@ function App() {
 
     glitchPulse(0.4);
     vibrate([0, 20, 40, 20], settings.haptics);
+
+    if (mpStatus.connected && mpStatus.mode === "race") {
+      mpBroadcast("race-event", { type: "status", status: "RUNNING", msg: "Run started", playerId: mpStatus.playerId });
+    }
   }
 
   function abortToLobby() {
@@ -1596,13 +1956,23 @@ function App() {
     );
   }
 
+  function openJoinModal(mode) {
+    setMpJoinModal({ open: true, mode, code: "" });
+  }
+
+  function submitJoin() {
+    if (!mpJoinModal.code) return;
+    joinRoom(mpJoinModal.mode, mpJoinModal.code);
+    setMpJoinModal({ open: false, mode: null, code: "" });
+  }
+
   /** ---------------------------
    *  RENDER SCREENS
    *  --------------------------- */
   function LobbyScreen() {
     return (
-      <div className="grid grid-cols-1 md:grid-cols-[1.15fr_0.85fr] gap-[1.6vmin] min-h-0">
-        <div className="panel p-[2vmin] min-h-0 flex flex-col">
+      <div className="grid grid-cols-1 md:grid-cols-[1.15fr_0.85fr] gap-[1.6vmin] min-h-0 lobby-screen">
+        <div className="panel p-[2vmin] min-h-0 flex flex-col lobby-hero">
           <div className="flex items-center justify-between">
             <div className="os-title text-[1.8vmin]" style={{ color: PALETTE.blue }}>MAIN LOBBY</div>
             <div className="text-[1.25vmin] opacity-80">
@@ -1613,7 +1983,7 @@ function App() {
           <div className="hr-scan my-[1.2vmin]" />
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-[1.2vmin]">
-            <div className="panel-2 p-[1.8vmin] md:col-span-2">
+            <div className="panel-2 p-[1.8vmin] md:col-span-2 lobby-accent lobby-banner">
               <div className="os-title text-[1.35vmin]" style={{ color: PALETTE.green }}>GAME BAY</div>
               <div className="mt-[1.2vmin] grid grid-cols-1 md:grid-cols-2 gap-[1.2vmin]">
                 <div className="game-card">
@@ -1655,7 +2025,40 @@ function App() {
               </div>
             </div>
 
-            <div className="panel-2 p-[1.8vmin]">
+            <div className="panel-2 p-[1.8vmin] lobby-accent">
+              <div className="os-title text-[1.35vmin]" style={{ color: PALETTE.green }}>MULTIPLAYER BAY</div>
+              <div className="mt-[1.0vmin] grid grid-cols-1 gap-[1.0vmin]">
+                <div className="mp-card">
+                  <div className="os-title text-[1.2vmin]" style={{ color: PALETTE.blue }}>CONNECT-4 HEAD-TO-HEAD</div>
+                  <div className="mt-[0.6vmin] text-[1.15vmin] opacity-80">Private room, 2 players, turn-based.</div>
+                  <div className="mp-row mt-[0.8vmin]">
+                    <button className="xg-btn" disabled={!mpStatus.configured || !mpUserId} onClick={() => createRoom("knct4")}>Create Room</button>
+                    <button className="xg-btn" disabled={!mpStatus.configured || !mpUserId} onClick={() => openJoinModal("knct4")}>Join by Code</button>
+                  </div>
+                </div>
+                <div className="mp-card">
+                  <div className="os-title text-[1.2vmin]" style={{ color: PALETTE.green }}>SEQUENCER RACE</div>
+                  <div className="mt-[0.6vmin] text-[1.15vmin] opacity-80">First to extract wins. Real-time status.</div>
+                  <div className="mp-row mt-[0.8vmin]">
+                    <button className="xg-btn" disabled={!mpStatus.configured || !mpUserId} onClick={() => createRoom("race")}>Create Room</button>
+                    <button className="xg-btn" disabled={!mpStatus.configured || !mpUserId} onClick={() => openJoinModal("race")}>Join by Code</button>
+                  </div>
+                </div>
+                {mpStatus.connected && (
+                  <div className="panel p-[1.0vmin]">
+                    <div className="text-[1.1vmin] opacity-85">
+                      Room <span style={{ color: PALETTE.blue }}>{mpStatus.roomCode}</span> | Role <span style={{ color: PALETTE.green }}>{mpStatus.role}</span>
+                    </div>
+                    <div className="mp-row mt-[0.6vmin]">
+                      <button className="xg-btn" onClick={() => copyRoomCode(mpStatus.roomCode)}>Copy Code</button>
+                      <button className="xg-btn" onClick={() => leaveRoom("manual")}>Leave Room</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="panel-2 p-[1.8vmin] lobby-accent">
               <div className="os-title text-[1.35vmin]" style={{ color: PALETTE.green }}>RUN CONFIG // SEQUENCER</div>
               <div className="mt-[1.0vmin] text-[1.35vmin] opacity-85">
                 Difficulty: <span style={{ color: PALETTE.blue }}>{settings.difficulty}</span><br />
@@ -1678,7 +2081,7 @@ function App() {
               </div>
             </div>
 
-            <div className="panel-2 p-[1.8vmin]">
+            <div className="panel-2 p-[1.8vmin] lobby-accent">
               <div className="os-title text-[1.35vmin]" style={{ color: PALETTE.blue }}>PRIMARY CONTRACT</div>
               <div className="mt-[1.0vmin] text-[1.35vmin] opacity-85">
                 <span style={{ color: PALETTE.green }}>{PRIMARY_CONTRACT.title}</span><br />
@@ -1690,7 +2093,7 @@ function App() {
               </div>
             </div>
 
-            <div className="panel p-[1.8vmin] md:col-span-2">
+            <div className="panel p-[1.8vmin] md:col-span-2 lobby-accent">
               <div className="os-title text-[1.35vmin]" style={{ color: PALETTE.blue }}>SYSTEM BRIEF</div>
               <div className="mt-[1.0vmin] text-[1.35vmin] opacity-85">
                 Spin to execute procedures. Manage <span style={{ color: PALETTE.blue }}>Stability</span>, avoid
@@ -1896,7 +2299,7 @@ function App() {
     const showAnomaly = phase === "anomaly_choice";
 
     return (
-      <div className="grid grid-cols-1 md:grid-cols-[1.15fr_0.85fr] gap-[1.6vmin] min-h-0">
+      <div className="grid grid-cols-1 md:grid-cols-[1.15fr_0.85fr] gap-[1.6vmin] min-h-0 lobby-screen">
         {showAnomaly && (
           <div className="modal" style={{ position: "absolute", inset: 0, zIndex: 60, display: "grid", placeItems: "center", background: "rgba(0,0,0,0.68)", backdropFilter: "blur(0.8vmin)" }}>
             <div className="modal-card">
@@ -1963,6 +2366,22 @@ function App() {
           </div>
           <div className="hr-scan my-[1.2vmin]" />
 
+          {mpStatus.connected && mpStatus.mode === "race" && (
+            <div className="panel p-[1.2vmin] mb-[1.0vmin]">
+              <div className="os-title text-[1.35vmin]" style={{ color: PALETTE.blue }}>RACE ROOM</div>
+              <div className="mt-[0.6vmin] text-[1.2vmin] opacity-85">
+                Code <span style={{ color: PALETTE.blue }}>{mpStatus.roomCode}</span> | Role <span style={{ color: PALETTE.green }}>{mpStatus.role}</span>
+              </div>
+              <div className="mt-[0.4vmin] text-[1.2vmin] opacity-80">
+                Opponent: <span style={{ color: PALETTE.green }}>{raceOpponent.status}</span> ({raceOpponent.lastEvent})
+              </div>
+              <div className="mp-row mt-[0.8vmin]">
+                <button className="xg-btn" onClick={() => copyRoomCode(mpStatus.roomCode)}>Copy Code</button>
+                <button className="xg-btn" onClick={() => leaveRoom("manual")}>Leave Room</button>
+              </div>
+            </div>
+          )}
+
           <div className="grid grid-cols-1 md:grid-cols-3 gap-[1.2vmin]">
             <Meter label="STABILITY" value={stability} max={150} color={PALETTE.blue} warnAt={80} dangerAt={120} />
             <Meter label="CONTAMINATION" value={contamination} max={100} color={PALETTE.green} warnAt={60} dangerAt={85} />
@@ -1990,6 +2409,14 @@ function App() {
         <div className="panel-2 p-[2vmin] min-h-0 flex flex-col">
           <div className="os-title text-[1.8vmin]" style={{ color: PALETTE.green }}>EXTRACTION CONSOLE</div>
           <div className="hr-scan my-[1.2vmin]" />
+
+          {mpStatus.connected && mpStatus.mode === "race" && (
+            <div className="panel p-[1.2vmin] mb-[1.2vmin]">
+              <div className="os-title text-[1.25vmin]" style={{ color: PALETTE.blue }}>RACE HUD</div>
+              <div className="mt-[0.6vmin] text-[1.2vmin] opacity-85">You: Player {mpStatus.playerId} | Opponent: {raceOpponent.status}</div>
+              <div className="mt-[0.4vmin] text-[1.15vmin] opacity-80">Last: {raceOpponent.lastEvent}</div>
+            </div>
+          )}
 
           <div className="panel p-[1.6vmin] mb-[1.2vmin]">
             <div className="os-title text-[1.35vmin]" style={{ color: PALETTE.blue }}>LAST DROP</div>
@@ -2093,7 +2520,7 @@ function App() {
 
   function Knct4Screen() {
     return (
-      <div className="grid grid-cols-1 md:grid-cols-[1.15fr_0.85fr] gap-[1.6vmin] min-h-0">
+      <div className="grid grid-cols-1 md:grid-cols-[1.15fr_0.85fr] gap-[1.6vmin] min-h-0 lobby-screen">
         <div className="panel p-[2vmin] min-h-0 flex flex-col">
           <div className="flex items-center justify-between">
             <div className="os-title text-[1.8vmin]" style={{ color: PALETTE.blue }}>CONNECT-4 // DROP GRID</div>
@@ -2103,6 +2530,18 @@ function App() {
             </div>
           </div>
           <div className="hr-scan my-[1.2vmin]" />
+
+          {mpStatus.connected && mpStatus.mode === "knct4" && (
+            <div className="panel p-[1.0vmin] mb-[1.0vmin]">
+              <div className="text-[1.15vmin] opacity-85">
+                Room <span style={{ color: PALETTE.blue }}>{mpStatus.roomCode}</span> | Role <span style={{ color: PALETTE.green }}>{mpStatus.role}</span> | You are Player {mpStatus.playerId}
+              </div>
+              <div className="mp-row mt-[0.6vmin]">
+                <button className="xg-btn" onClick={() => copyRoomCode(mpStatus.roomCode)}>Copy Code</button>
+                <button className="xg-btn" onClick={() => leaveRoom("manual")}>Leave Room</button>
+              </div>
+            </div>
+          )}
 
           <div className="grid grid-cols-1 md:grid-cols-4 gap-[1.0vmin] text-[1.2vmin]">
             <div className="panel p-[1.0vmin] flex items-center gap-[0.8vmin]">
@@ -2187,10 +2626,10 @@ function App() {
           )}
 
           <div className="mt-[1.6vmin] grid grid-cols-2 md:grid-cols-4 gap-[1.0vmin]">
-            <button className="xg-btn" onClick={() => resetKnctMatch()} disabled={knctMoves.length === 0}>
+            <button className="xg-btn" onClick={() => resetKnctMatch()} disabled={knctMoves.length === 0 || (mpStatus.connected && mpStatus.mode === "knct4" && mpStatus.role !== "host")}>
               Reset Match
             </button>
-            <button className="xg-btn" onClick={startNextKnctMatch}>
+            <button className="xg-btn" onClick={startNextKnctMatch} disabled={mpStatus.connected && mpStatus.mode === "knct4" && mpStatus.role !== "host"}>
               New Match
             </button>
             <button className="xg-btn" onClick={() => setScreen("lobby")}>
@@ -2199,6 +2638,11 @@ function App() {
             <button className="xg-btn" onClick={() => setScreen("settings")}>
               Settings
             </button>
+            {mpStatus.connected && mpStatus.mode === "knct4" && (
+              <button className="xg-btn" onClick={() => leaveRoom("manual")}>
+                Leave Room
+              </button>
+            )}
           </div>
           <div className="mt-[1.0vmin] text-[1.2vmin] opacity-70">
             Tap any column to drop a chip. First player to connect four wins.
@@ -2216,7 +2660,7 @@ function App() {
               Player 2 Wins: <span style={{ color: PALETTE.green }}>{knctScores.p2}</span><br />
               Draws: <span style={{ color: "rgba(255,140,0,0.88)" }}>{knctScores.draws}</span>
             </div>
-            <button className="xg-btn w-full mt-[1.0vmin]" onClick={resetKnctScores}>
+            <button className="xg-btn w-full mt-[1.0vmin]" onClick={resetKnctScores} disabled={mpStatus.connected && mpStatus.mode === "knct4" && mpStatus.role !== "host"}>
               Purge Score Cache
             </button>
           </div>
@@ -2229,7 +2673,8 @@ function App() {
                   key={set.id}
                   type="button"
                   className={`knct-chipset ${knctChipSetId === set.id ? "knct-chipset--active" : ""}`}
-                  onClick={() => setKnctChipSetId(set.id)}
+                  onClick={() => updateKnctChipSet(set.id)}
+                  disabled={mpStatus.connected && mpStatus.mode === "knct4" && mpStatus.role !== "host"}
                 >
                   <span className="knct-chipset-label">{set.label}</span>
                   <span className="knct-chipset-swatches">
@@ -2298,7 +2743,10 @@ function App() {
       <div className="noise" />
       <div ref={glitchHostRef}><GlitchOverlay /></div>
 
-      <div className="w-screen h-screen p-[2.2vmin] grid grid-rows-[auto_1fr_auto] gap-[1.6vmin]">
+      <div className="w-screen min-h-screen p-[2.2vmin] grid grid-rows-[auto_1fr_auto] gap-[1.6vmin] overflow-y-auto">
+        {offlineBanner && (
+          <div className="banner-offline">Supabase not configured — running offline/local mode</div>
+        )}
         <div className="panel px-[2vmin] py-[1.6vmin] flex items-center justify-between">
           <div>
             <div className="os-title text-[2.2vmin] md:text-[1.6vmin]" style={{ color: PALETTE.green }}>
@@ -2311,7 +2759,7 @@ function App() {
             </div>
           </div>
 
-          <div className="flex items-center gap-[1.0vmin]">
+          <div className="flex items-center gap-[1.0vmin] flex-wrap justify-end">
             {navButton("lobby", "Lobby")}
             {navButton("knct4", "Connect-4")}
             {navButton("store", "Store")}
@@ -2337,6 +2785,54 @@ function App() {
           </div>
         </div>
       </div>
+      {mpStatus.error === "Room full" && (
+        <div className="modal" style={{ position: "fixed", inset: 0, zIndex: 85, display: "grid", placeItems: "center", background: "rgba(0,0,0,0.68)", backdropFilter: "blur(0.6vmin)" }}>
+          <div className="modal-card">
+            <div className="os-title text-[1.6vmin]" style={{ color: "rgba(255,140,0,0.9)" }}>ROOM FULL</div>
+            <div className="hr-scan my-[1.2vmin]" />
+            <div className="text-[1.25vmin] opacity-85">That room already has 2 players. Ask the host for a new code.</div>
+            <div className="panel__actions">
+              <button className="xg-btn" onClick={() => setMpStatus((s) => ({ ...s, error: null }))}>OK</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {mpJoinModal.open && (
+        <div className="modal" style={{ position: "fixed", inset: 0, zIndex: 80, display: "grid", placeItems: "center", background: "rgba(0,0,0,0.68)", backdropFilter: "blur(0.6vmin)" }}>
+          <div className="modal-card">
+            <div className="os-title text-[1.6vmin]" style={{ color: PALETTE.blue }}>JOIN ROOM</div>
+            <div className="hr-scan my-[1.2vmin]" />
+            <div className="text-[1.25vmin] opacity-85">Enter invite code for {mpJoinModal.mode === "knct4" ? "Connect-4" : "Sequencer Race"}.</div>
+            <div className="mt-[1.2vmin] field">
+              <label>Invite Code</label>
+              <input
+                className="xg-input"
+                value={mpJoinModal.code}
+                onChange={(e) => setMpJoinModal((s) => ({ ...s, code: normalizeRoomCode(e.target.value) }))}
+                placeholder="e.g. A9K2QZ"
+              />
+            </div>
+            <div className="panel__actions">
+              <button className="xg-btn" onClick={() => setMpJoinModal({ open: false, mode: null, code: "" })}>Cancel</button>
+              <button className="xg-btn" onClick={submitJoin} disabled={!mpJoinModal.code}>Join</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="debug-panel">
+        <div className="label">Multiplayer Debug</div>
+        <div>Configured: <span style={{ color: mpStatus.configured ? PALETTE.green : "rgba(255,140,0,0.88)" }}>{mpStatus.configured ? "YES" : "NO"}</span></div>
+        <div>Connected: <span style={{ color: mpStatus.connected ? PALETTE.green : "rgba(255,140,0,0.88)" }}>{mpStatus.connected ? "YES" : "NO"}</span></div>
+        <div>Mode: {mpStatus.mode || "-"}</div>
+        <div>Room: {mpStatus.roomCode || "-"}</div>
+        <div>Role: {mpStatus.role || "-"} (P{mpStatus.playerId || "-"})</div>
+        <div>Presence: {mpStatus.presence}</div>
+        <div>Last Event: {mpStatus.lastEvent}</div>
+        {mpStatus.error && <div style={{ color: "rgba(255,140,0,0.88)" }}>Error: {mpStatus.error}</div>}
+      </div>
+
     </div>
   );
 }

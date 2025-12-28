@@ -1,9 +1,9 @@
 -- Merging decision tree log ---
 manifest
-ADDED from C:\Users\Administrator\AndroidStudioProjects\XENGENiX\app\src\main\AndroidManifest.xml:2:1-35:12
-INJECTED from C:\Users\Administrator\AndroidStudioProjects\XENGENiX\app\src\main\AndroidManifest.xml:2:1-35:12
-INJECTED from C:\Users\Administrator\AndroidStudioProjects\XENGENiX\app\src\main\AndroidManifest.xml:2:1-35:12
-INJECTED from C:\Users\Administrator\AndroidStudioProjects\XENGENiX\app\src\main\AndroidManifest.xml:2:1-35:12
+ADDED from C:\Users\Administrator\AndroidStudioProjects\XENGENiX\app\src\main\AndroidManifest.xml:2:1-36:12
+INJECTED from C:\Users\Administrator\AndroidStudioProjects\XENGENiX\app\src\main\AndroidManifest.xml:2:1-36:12
+INJECTED from C:\Users\Administrator\AndroidStudioProjects\XENGENiX\app\src\main\AndroidManifest.xml:2:1-36:12
+INJECTED from C:\Users\Administrator\AndroidStudioProjects\XENGENiX\app\src\main\AndroidManifest.xml:2:1-36:12
 MERGED from [com.google.android.material:material:1.12.0] C:\Users\Administrator\.gradle\caches\8.13\transforms\75f0b086794e37b6373adaedfd3cfe93\transformed\material-1.12.0\AndroidManifest.xml:17:1-24:12
 MERGED from [androidx.appcompat:appcompat-resources:1.7.1] C:\Users\Administrator\.gradle\caches\8.13\transforms\079389c1a8f7fe85560efc130b8feda6\transformed\appcompat-resources-1.7.1\AndroidManifest.xml:2:1-7:12
 MERGED from [androidx.constraintlayout:constraintlayout:2.0.1] C:\Users\Administrator\.gradle\caches\8.13\transforms\965448b2ba92daf2add80f5c144a2b45\transformed\constraintlayout-2.0.1\AndroidManifest.xml:2:1-11:12
@@ -64,8 +64,8 @@ ADDED from C:\Users\Administrator\AndroidStudioProjects\XENGENiX\app\src\main\An
 	android:name
 		ADDED from C:\Users\Administrator\AndroidStudioProjects\XENGENiX\app\src\main\AndroidManifest.xml:8:22-63
 application
-ADDED from C:\Users\Administrator\AndroidStudioProjects\XENGENiX\app\src\main\AndroidManifest.xml:10:5-34:19
-INJECTED from C:\Users\Administrator\AndroidStudioProjects\XENGENiX\app\src\main\AndroidManifest.xml:10:5-34:19
+ADDED from C:\Users\Administrator\AndroidStudioProjects\XENGENiX\app\src\main\AndroidManifest.xml:10:5-35:19
+INJECTED from C:\Users\Administrator\AndroidStudioProjects\XENGENiX\app\src\main\AndroidManifest.xml:10:5-35:19
 MERGED from [com.google.android.material:material:1.12.0] C:\Users\Administrator\.gradle\caches\8.13\transforms\75f0b086794e37b6373adaedfd3cfe93\transformed\material-1.12.0\AndroidManifest.xml:22:5-20
 MERGED from [com.google.android.material:material:1.12.0] C:\Users\Administrator\.gradle\caches\8.13\transforms\75f0b086794e37b6373adaedfd3cfe93\transformed\material-1.12.0\AndroidManifest.xml:22:5-20
 MERGED from [androidx.constraintlayout:constraintlayout:2.0.1] C:\Users\Administrator\.gradle\caches\8.13\transforms\965448b2ba92daf2add80f5c144a2b45\transformed\constraintlayout-2.0.1\AndroidManifest.xml:9:5-20
@@ -87,43 +87,45 @@ MERGED from [androidx.versionedparcelable:versionedparcelable:1.1.1] C:\Users\Ad
 	android:appComponentFactory
 		ADDED from [androidx.core:core:1.16.0] C:\Users\Administrator\.gradle\caches\8.13\transforms\a065c97d3945050d185f92cf8d2f740c\transformed\core-1.16.0\AndroidManifest.xml:28:18-86
 	android:supportsRtl
-		ADDED from C:\Users\Administrator\AndroidStudioProjects\XENGENiX\app\src\main\AndroidManifest.xml:13:9-35
+		ADDED from C:\Users\Administrator\AndroidStudioProjects\XENGENiX\app\src\main\AndroidManifest.xml:15:9-35
 	android:label
-		ADDED from C:\Users\Administrator\AndroidStudioProjects\XENGENiX\app\src\main\AndroidManifest.xml:12:9-36
+		ADDED from C:\Users\Administrator\AndroidStudioProjects\XENGENiX\app\src\main\AndroidManifest.xml:14:9-36
 	android:hardwareAccelerated
-		ADDED from C:\Users\Administrator\AndroidStudioProjects\XENGENiX\app\src\main\AndroidManifest.xml:14:9-43
+		ADDED from C:\Users\Administrator\AndroidStudioProjects\XENGENiX\app\src\main\AndroidManifest.xml:16:9-43
+	android:roundIcon
+		ADDED from C:\Users\Administrator\AndroidStudioProjects\XENGENiX\app\src\main\AndroidManifest.xml:13:9-54
+	android:icon
+		ADDED from C:\Users\Administrator\AndroidStudioProjects\XENGENiX\app\src\main\AndroidManifest.xml:12:9-43
 	android:allowBackup
 		ADDED from C:\Users\Administrator\AndroidStudioProjects\XENGENiX\app\src\main\AndroidManifest.xml:11:9-35
 	android:theme
-		ADDED from C:\Users\Administrator\AndroidStudioProjects\XENGENiX\app\src\main\AndroidManifest.xml:16:9-48
+		ADDED from C:\Users\Administrator\AndroidStudioProjects\XENGENiX\app\src\main\AndroidManifest.xml:18:9-48
 	android:usesCleartextTraffic
-		ADDED from C:\Users\Administrator\AndroidStudioProjects\XENGENiX\app\src\main\AndroidManifest.xml:15:9-45
+		ADDED from C:\Users\Administrator\AndroidStudioProjects\XENGENiX\app\src\main\AndroidManifest.xml:17:9-45
 activity#com.example.xenogenics.MainActivity
-ADDED from C:\Users\Administrator\AndroidStudioProjects\XENGENiX\app\src\main\AndroidManifest.xml:18:9-32:20
-	android:screenOrientation
-		ADDED from C:\Users\Administrator\AndroidStudioProjects\XENGENiX\app\src\main\AndroidManifest.xml:24:13-56
+ADDED from C:\Users\Administrator\AndroidStudioProjects\XENGENiX\app\src\main\AndroidManifest.xml:20:9-33:20
 	android:launchMode
-		ADDED from C:\Users\Administrator\AndroidStudioProjects\XENGENiX\app\src\main\AndroidManifest.xml:22:13-44
+		ADDED from C:\Users\Administrator\AndroidStudioProjects\XENGENiX\app\src\main\AndroidManifest.xml:24:13-44
 	android:hardwareAccelerated
-		ADDED from C:\Users\Administrator\AndroidStudioProjects\XENGENiX\app\src\main\AndroidManifest.xml:21:13-47
+		ADDED from C:\Users\Administrator\AndroidStudioProjects\XENGENiX\app\src\main\AndroidManifest.xml:23:13-47
 	android:exported
-		ADDED from C:\Users\Administrator\AndroidStudioProjects\XENGENiX\app\src\main\AndroidManifest.xml:20:13-36
+		ADDED from C:\Users\Administrator\AndroidStudioProjects\XENGENiX\app\src\main\AndroidManifest.xml:22:13-36
 	android:configChanges
-		ADDED from C:\Users\Administrator\AndroidStudioProjects\XENGENiX\app\src\main\AndroidManifest.xml:23:13-122
+		ADDED from C:\Users\Administrator\AndroidStudioProjects\XENGENiX\app\src\main\AndroidManifest.xml:25:13-122
 	android:theme
-		ADDED from C:\Users\Administrator\AndroidStudioProjects\XENGENiX\app\src\main\AndroidManifest.xml:25:13-52
+		ADDED from C:\Users\Administrator\AndroidStudioProjects\XENGENiX\app\src\main\AndroidManifest.xml:26:13-52
 	android:name
-		ADDED from C:\Users\Administrator\AndroidStudioProjects\XENGENiX\app\src\main\AndroidManifest.xml:19:13-41
+		ADDED from C:\Users\Administrator\AndroidStudioProjects\XENGENiX\app\src\main\AndroidManifest.xml:21:13-41
 intent-filter#action:name:android.intent.action.MAIN+category:name:android.intent.category.LAUNCHER
-ADDED from C:\Users\Administrator\AndroidStudioProjects\XENGENiX\app\src\main\AndroidManifest.xml:27:13-30:29
+ADDED from C:\Users\Administrator\AndroidStudioProjects\XENGENiX\app\src\main\AndroidManifest.xml:28:13-31:29
 action#android.intent.action.MAIN
-ADDED from C:\Users\Administrator\AndroidStudioProjects\XENGENiX\app\src\main\AndroidManifest.xml:28:17-69
+ADDED from C:\Users\Administrator\AndroidStudioProjects\XENGENiX\app\src\main\AndroidManifest.xml:29:17-69
 	android:name
-		ADDED from C:\Users\Administrator\AndroidStudioProjects\XENGENiX\app\src\main\AndroidManifest.xml:28:25-66
+		ADDED from C:\Users\Administrator\AndroidStudioProjects\XENGENiX\app\src\main\AndroidManifest.xml:29:25-66
 category#android.intent.category.LAUNCHER
-ADDED from C:\Users\Administrator\AndroidStudioProjects\XENGENiX\app\src\main\AndroidManifest.xml:29:17-77
+ADDED from C:\Users\Administrator\AndroidStudioProjects\XENGENiX\app\src\main\AndroidManifest.xml:30:17-77
 	android:name
-		ADDED from C:\Users\Administrator\AndroidStudioProjects\XENGENiX\app\src\main\AndroidManifest.xml:29:27-74
+		ADDED from C:\Users\Administrator\AndroidStudioProjects\XENGENiX\app\src\main\AndroidManifest.xml:30:27-74
 uses-sdk
 INJECTED from C:\Users\Administrator\AndroidStudioProjects\XENGENiX\app\src\main\AndroidManifest.xml reason: use-sdk injection requested
 INJECTED from C:\Users\Administrator\AndroidStudioProjects\XENGENiX\app\src\main\AndroidManifest.xml
