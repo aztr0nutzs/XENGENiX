@@ -1,0 +1,4 @@
+#Sun Dec 28 12:16:10 EST 2025
+base.0=/home/aztr0nutzs/Documents/XENGENiX/app/build/intermediates/dex/release/minifyReleaseWithR8/classes.dex
+renamed.0=classes.dex
+path.0=classes.dex
