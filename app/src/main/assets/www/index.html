@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1, viewport-fit=cover"
+  />
+  <meta name="theme-color" content="#000000" />
+  <title>XENO-GENICS // XG-OS</title>
+
+  <!-- Tailwind CDN (dev-friendly). For real production, build Tailwind locally. -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <link rel="stylesheet" href="./style.css" />
+
+  <!-- React 18 UMD -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+
+  <!-- GSAP 3 -->
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+
+  <!-- Babel Standalone (JSX in-browser) -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+
+<body>
+  <!-- single body tag only. (No “Double Body” bug.) -->
+  <div id="root"></div>
+
+  <!-- Your game logic -->
+  <script type="text/babel" src="./script.js"></script>
+</body>
+</html>
