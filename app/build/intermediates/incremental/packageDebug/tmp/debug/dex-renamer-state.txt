@@ -1,7 +1,7 @@
-#Sun Dec 28 17:33:34 EST 2025
-base.0=C\:\\Users\\Administrator\\AndroidStudioProjects\\XENGENiX\\app\\build\\intermediates\\dex\\debug\\mergeExtDexDebug\\classes.dex
-base.1=C\:\\Users\\Administrator\\AndroidStudioProjects\\XENGENiX\\app\\build\\intermediates\\dex\\debug\\mergeProjectDexDebug\\0\\classes.dex
-base.2=C\:\\Users\\Administrator\\AndroidStudioProjects\\XENGENiX\\app\\build\\intermediates\\dex\\debug\\mergeProjectDexDebug\\8\\classes.dex
+#Mon Dec 29 00:23:17 EST 2025
+base.0=/home/aztr0nutzs/StudioProjects/XENGENiX/app/build/intermediates/dex/debug/mergeExtDexDebug/classes.dex
+base.1=/home/aztr0nutzs/StudioProjects/XENGENiX/app/build/intermediates/dex/debug/mergeProjectDexDebug/0/classes.dex
+base.2=/home/aztr0nutzs/StudioProjects/XENGENiX/app/build/intermediates/dex/debug/mergeProjectDexDebug/8/classes.dex
 path.0=classes.dex
 path.1=0/classes.dex
 path.2=8/classes.dex
