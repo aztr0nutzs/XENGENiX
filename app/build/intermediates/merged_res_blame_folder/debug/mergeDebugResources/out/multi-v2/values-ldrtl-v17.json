@@ -4,7 +4,7 @@
             "outputFile": "com.example.xenogenics.app-mergeDebugResources-32:/values-ldrtl-v17/values-ldrtl-v17.xml",
             "map": [
                 {
-                    "source": "C:\\Users\\Administrator\\.gradle\\caches\\8.13\\transforms\\75f0b086794e37b6373adaedfd3cfe93\\transformed\\material-1.12.0\\res\\values-ldrtl-v17\\values-ldrtl-v17.xml",
+                    "source": "/home/aztr0nutzs/.gradle/caches/8.13/transforms/75f0b086794e37b6373adaedfd3cfe93/transformed/material-1.12.0/res/values-ldrtl-v17/values-ldrtl-v17.xml",
                     "from": {
                         "startLines": "2,3",
                         "startColumns": "4,4",
