@@ -12,6 +12,14 @@ const LS_KEYS = {
   knctScores: "xg_knct4_scores_v1",
   knctChipSet: "xg_knct4_chipset_v1",
   knctLastResult: "xg_knct4_last_result_v1",
+  slotCredits: "xg_slot_credits_v1",
+  slotBetPerLine: "xg_slot_bet_per_line_v1",
+  slotMeters: "xg_slot_jackpot_meters_v1",
+  slotLastOutcome: "xg_slot_last_outcome_v1",
+  slotLastSeen: "xg_slot_last_seen_v1",
+  slotLiteMode: "xg_slot_lite_mode_v1",
+  slotLog: "xg_slot_log_v1",
+  slotSeed: "xg_slot_seed_v1",
 };
 
 function clamp(n, a, b) { return Math.max(a, Math.min(b, n)); }
@@ -128,6 +136,369 @@ const PRIMARY_CONTRACT = {
   desc: "Extract with Alarm < 50.",
   bonus: 70,
 };
+
+/** ---------------------------
+ *  SLOT MACHINE ENGINE
+ *  --------------------------- */
+function makeSeededRng(seed) {
+  let t = seed >>> 0;
+  return {
+    nextFloat() {
+      t += 0x6D2B79F5;
+      let x = Math.imul(t ^ (t >>> 15), 1 | t);
+      x ^= x + Math.imul(x ^ (x >>> 7), 61 | x);
+      return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
+    },
+    nextInt(bound) {
+      if (bound <= 0) return 0;
+      return Math.floor(this.nextFloat() * bound);
+    },
+  };
+}
+
+function makeRng() {
+  return {
+    nextFloat() { return Math.random(); },
+    nextInt(bound) { return Math.floor(Math.random() * bound); },
+  };
+}
+
+const SLOT_SYMBOLS = {
+  A: { label: "A", kind: "LOW", color: "#7df7ff" },
+  K: { label: "K", kind: "LOW", color: "#9dffb8" },
+  Q: { label: "Q", kind: "LOW", color: "#b6c7ff" },
+  J: { label: "J", kind: "LOW", color: "#ffd28f" },
+  10: { label: "10", kind: "LOW", color: "#f4ff9d" },
+  9: { label: "9", kind: "LOW", color: "#c5f1ff" },
+  CRYO: { label: "CRYO", kind: "HIGH", color: "#57e3ff" },
+  HELIX: { label: "HELIX", kind: "HIGH", color: "#39ff14" },
+  VIRUS: { label: "VIRUS", kind: "HIGH", color: "#ff6f6f" },
+  CORE: { label: "CORE", kind: "HIGH", color: "#ffbd4a" },
+  WILD: { label: "WILD", kind: "WILD", color: "#ffffff" },
+  SCATTER: { label: "SCAT", kind: "SCATTER", color: "#ff4dff" },
+  ORB: { label: "ORB", kind: "ORB", color: "#00ffff" },
+};
+
+const SLOT_PAYLINES = [
+  [1, 1, 1, 1, 1],
+  [0, 0, 0, 0, 0],
+  [2, 2, 2, 2, 2],
+  [0, 1, 2, 1, 0],
+  [2, 1, 0, 1, 2],
+  [1, 0, 0, 0, 1],
+  [1, 2, 2, 2, 1],
+  [0, 0, 1, 0, 0],
+  [2, 2, 1, 2, 2],
+  [0, 1, 1, 1, 0],
+  [2, 1, 1, 1, 2],
+  [1, 0, 1, 2, 1],
+  [1, 2, 1, 0, 1],
+  [0, 1, 0, 1, 0],
+  [2, 1, 2, 1, 2],
+  [0, 1, 2, 2, 2],
+  [2, 1, 0, 0, 0],
+  [0, 0, 0, 1, 2],
+  [2, 2, 2, 1, 0],
+  [1, 1, 0, 1, 1],
+  [1, 1, 2, 1, 1],
+  [0, 2, 0, 2, 0],
+  [2, 0, 2, 0, 2],
+  [0, 2, 2, 2, 0],
+  [2, 0, 0, 0, 2],
+  [0, 1, 1, 2, 2],
+  [2, 1, 1, 0, 0],
+  [1, 2, 2, 1, 0],
+  [1, 0, 0, 1, 2],
+  [0, 2, 1, 2, 0],
+  [2, 0, 1, 0, 2],
+  [1, 0, 1, 1, 2],
+  [1, 2, 1, 1, 0],
+  [0, 1, 2, 1, 2],
+  [2, 1, 0, 1, 0],
+  [0, 0, 1, 1, 2],
+  [2, 2, 1, 1, 0],
+  [1, 0, 2, 0, 1],
+  [1, 2, 0, 2, 1],
+  [0, 2, 1, 0, 0],
+  [2, 0, 1, 2, 2],
+  [0, 1, 0, 2, 2],
+  [2, 1, 2, 0, 0],
+  [1, 2, 0, 1, 2],
+  [1, 0, 2, 1, 0],
+  [0, 2, 0, 1, 2],
+  [2, 0, 2, 1, 0],
+  [0, 1, 2, 0, 1],
+  [2, 1, 0, 2, 1],
+  [1, 0, 2, 2, 1],
+];
+
+const SLOT_CONFIG = {
+  reels: [
+    ["A","K","Q","J","10","9","A","K","Q","J","10","9","A","K","Q","J","10","9","CRYO","HELIX","VIRUS","CORE","A","K","Q","J","10","9","A","K","Q","J","10","9","WILD","SCATTER","A","K","Q","J"],
+    ["A","K","Q","J","10","9","A","K","Q","J","10","9","A","K","Q","J","10","9","CRYO","HELIX","VIRUS","CORE","A","K","Q","J","10","9","A","K","Q","J","10","9","WILD","SCATTER","A","K","Q","J"],
+    ["A","K","Q","J","10","9","A","K","Q","J","10","9","A","K","Q","J","10","9","CRYO","HELIX","VIRUS","CORE","A","K","Q","J","10","9","A","K","Q","J","10","9","WILD","SCATTER","A","K","Q","J"],
+    ["A","K","Q","J","10","9","A","K","Q","J","10","9","A","K","Q","J","10","9","CRYO","HELIX","VIRUS","CORE","A","K","Q","J","10","9","A","K","Q","J","10","9","WILD","SCATTER","A","K","Q","J"],
+    ["A","K","Q","J","10","9","A","K","Q","J","10","9","A","K","Q","J","10","9","CRYO","HELIX","VIRUS","CORE","A","K","Q","J","10","9","A","K","Q","J","10","9","WILD","SCATTER","A","K","Q","J"],
+  ],
+  paylines: SLOT_PAYLINES,
+  paytable: {
+    A: { 3: 4, 4: 8, 5: 16 },
+    K: { 3: 4, 4: 9, 5: 18 },
+    Q: { 3: 4, 4: 10, 5: 20 },
+    J: { 3: 4, 4: 10, 5: 22 },
+    10: { 3: 3, 4: 8, 5: 18 },
+    9: { 3: 3, 4: 7, 5: 16 },
+    CRYO: { 3: 6, 4: 18, 5: 45 },
+    HELIX: { 3: 8, 4: 24, 5: 60 },
+    VIRUS: { 3: 10, 4: 30, 5: 80 },
+    CORE: { 3: 12, 4: 40, 5: 110 },
+    WILD: { 3: 15, 4: 60, 5: 200 },
+  },
+  scatterPay: { 3: 4, 4: 20, 5: 100 },
+  orbTriggerCount: 6,
+  bonusRespins: 3,
+  jackpotSeed: { mini: 40, minor: 120, major: 450, grand: 2400 },
+  jackpotRates: { mini: 0.02, minor: 0.012, major: 0.006, grand: 0.002 },
+  orbValues: [
+    { value: 6, weight: 18 },
+    { value: 8, weight: 16 },
+    { value: 10, weight: 14 },
+    { value: 12, weight: 12 },
+    { value: 15, weight: 10 },
+    { value: 20, weight: 8 },
+    { value: 25, weight: 6 },
+    { value: 40, weight: 4 },
+    { value: 60, weight: 2 },
+    { value: 90, weight: 1 },
+  ],
+  contributionRates: { mini: 0.02, minor: 0.01, major: 0.005, grand: 0.001 },
+};
+
+function makeDefaultMeters() {
+  return {
+    mini: SLOT_CONFIG.jackpotSeed.mini,
+    minor: SLOT_CONFIG.jackpotSeed.minor,
+    major: SLOT_CONFIG.jackpotSeed.major,
+    grand: SLOT_CONFIG.jackpotSeed.grand,
+  };
+}
+
+function weightedPick(rng, items) {
+  const total = items.reduce((acc, it) => acc + it.weight, 0);
+  let rollVal = rng.nextFloat() * total;
+  for (const item of items) {
+    rollVal -= item.weight;
+    if (rollVal <= 0) return item;
+  }
+  return items[items.length - 1];
+}
+
+function buildGridFromStops(stops, reels) {
+  const rows = 3;
+  const grid = Array.from({ length: rows }, () => Array.from({ length: reels.length }, () => "A"));
+  reels.forEach((strip, reelIndex) => {
+    const stop = stops[reelIndex];
+    const len = strip.length;
+    const mid = ((stop % len) + len) % len;
+    const top = (mid - 1 + len) % len;
+    const bot = (mid + 1) % len;
+    grid[0][reelIndex] = strip[top];
+    grid[1][reelIndex] = strip[mid];
+    grid[2][reelIndex] = strip[bot];
+  });
+  return grid;
+}
+
+function evaluateLine(symbols, paytable) {
+  let match = null;
+  let count = 0;
+  for (const sym of symbols) {
+    if (sym === "SCATTER" || sym === "ORB") break;
+    if (sym === "WILD") {
+      count += 1;
+      continue;
+    }
+    if (!match) {
+      match = sym;
+      count += 1;
+      continue;
+    }
+    if (sym === match || sym === "WILD") {
+      count += 1;
+      continue;
+    }
+    break;
+  }
+  const finalSymbol = match || (count > 0 ? "WILD" : null);
+  if (!finalSymbol || count < 3) return null;
+  const payout = paytable[finalSymbol]?.[count] || 0;
+  if (!payout) return null;
+  return { symbol: finalSymbol, count, payout };
+}
+
+function evaluatePaylines(grid, paylines, paytable, betPerLine) {
+  const wins = [];
+  paylines.forEach((line, lineIndex) => {
+    const symbols = line.map((row, reel) => grid[row][reel]);
+    const result = evaluateLine(symbols, paytable);
+    if (result) {
+      wins.push({
+        lineIndex,
+        symbol: result.symbol,
+        count: result.count,
+        payout: Math.round(result.payout * betPerLine),
+      });
+    }
+  });
+  return wins;
+}
+
+function countSymbol(grid, symbol) {
+  let count = 0;
+  grid.forEach((row) => row.forEach((cell) => { if (cell === symbol) count += 1; }));
+  return count;
+}
+
+function injectOrbs(grid, rng, betPerLine) {
+  const tier = clamp(betPerLine, 1, 10);
+  const baseProb = 0.045 + tier * 0.005;
+  const maxOrbs = 6 + tier;
+  let orbCount = 0;
+  const nextGrid = grid.map((row) => row.slice());
+  for (let r = 0; r < nextGrid.length; r += 1) {
+    for (let c = 0; c < nextGrid[r].length; c += 1) {
+      const sym = nextGrid[r][c];
+      if (sym === "WILD" || sym === "SCATTER") continue;
+      if (orbCount >= maxOrbs) continue;
+      if (rng.nextFloat() < baseProb) {
+        nextGrid[r][c] = "ORB";
+        orbCount += 1;
+      }
+    }
+  }
+  return { grid: nextGrid, orbCount };
+}
+
+function calcScatterWin(grid, scatterPay, totalBet) {
+  const count = countSymbol(grid, "SCATTER");
+  if (count < 3) return { count, win: 0 };
+  const payout = scatterPay[count] || 0;
+  return { count, win: Math.round(payout * totalBet) };
+}
+
+function spinBaseGame({ rng, betPerLine, meters }) {
+  const reels = SLOT_CONFIG.reels;
+  const stops = reels.map((strip) => rng.nextInt(strip.length));
+  let grid = buildGridFromStops(stops, reels);
+  const orbInjected = injectOrbs(grid, rng, betPerLine);
+  grid = orbInjected.grid;
+  const lineWins = evaluatePaylines(grid, SLOT_CONFIG.paylines, SLOT_CONFIG.paytable, betPerLine);
+  const totalBet = betPerLine * SLOT_CONFIG.paylines.length;
+  const scatter = calcScatterWin(grid, SLOT_CONFIG.scatterPay, totalBet);
+  const lineTotal = lineWins.reduce((sum, w) => sum + w.payout, 0);
+  const totalWin = lineTotal + scatter.win;
+  return {
+    reelStops: stops,
+    grid,
+    lineWins,
+    scatterWin: scatter.win,
+    scatterCount: scatter.count,
+    totalWin,
+    orbCount: orbInjected.orbCount,
+    triggerBonus: orbInjected.orbCount >= SLOT_CONFIG.orbTriggerCount,
+  };
+}
+
+function rollOrbAward(rng) {
+  const jackpotRoll = rng.nextFloat();
+  const rates = SLOT_CONFIG.jackpotRates;
+  if (jackpotRoll < rates.grand) return { jackpot: "grand" };
+  if (jackpotRoll < rates.grand + rates.major) return { jackpot: "major" };
+  if (jackpotRoll < rates.grand + rates.major + rates.minor) return { jackpot: "minor" };
+  if (jackpotRoll < rates.grand + rates.major + rates.minor + rates.mini) return { jackpot: "mini" };
+  const picked = weightedPick(rng, SLOT_CONFIG.orbValues);
+  return { value: picked.value };
+}
+
+function applyJackpot(meters, tier) {
+  const award = meters[tier] || 0;
+  const next = { ...meters };
+  next[tier] = SLOT_CONFIG.jackpotSeed[tier];
+  return { award, meters: next };
+}
+
+function runHoldAndSpin({ rng, baseGrid, meters, betPerLine }) {
+  const rows = 3;
+  const cols = 5;
+  let respins = SLOT_CONFIG.bonusRespins;
+  let bonusGrid = Array.from({ length: rows }, () => Array.from({ length: cols }, () => null));
+  let orbCount = 0;
+  let activeMeters = { ...meters };
+  let jackpotWins = [];
+
+  for (let r = 0; r < rows; r += 1) {
+    for (let c = 0; c < cols; c += 1) {
+      if (baseGrid[r][c] === "ORB") {
+        const award = rollOrbAward(rng);
+        bonusGrid[r][c] = award;
+        orbCount += 1;
+      }
+    }
+  }
+
+  while (respins > 0) {
+    let newOrbs = 0;
+    const fillProb = 0.16 + betPerLine * 0.005;
+    for (let r = 0; r < rows; r += 1) {
+      for (let c = 0; c < cols; c += 1) {
+        if (bonusGrid[r][c]) continue;
+        if (rng.nextFloat() < fillProb) {
+          const award = rollOrbAward(rng);
+          bonusGrid[r][c] = award;
+          newOrbs += 1;
+          orbCount += 1;
+        }
+      }
+    }
+    if (newOrbs > 0) {
+      respins = SLOT_CONFIG.bonusRespins;
+    } else {
+      respins -= 1;
+    }
+    if (orbCount >= rows * cols) break;
+  }
+
+  let total = 0;
+  bonusGrid.forEach((row) => {
+    row.forEach((cell) => {
+      if (!cell) return;
+      if (cell.jackpot) {
+        const result = applyJackpot(activeMeters, cell.jackpot);
+        activeMeters = result.meters;
+        jackpotWins = jackpotWins.concat([{ tier: cell.jackpot, amount: result.award }]);
+        total += result.award;
+      } else {
+        total += cell.value || 0;
+      }
+    });
+  });
+
+  return {
+    totalWin: total,
+    grid: bonusGrid,
+    jackpotWins,
+    meters: activeMeters,
+  };
+}
+
+function contributeMeters(meters, totalBet) {
+  const next = { ...meters };
+  next.mini += totalBet * SLOT_CONFIG.contributionRates.mini;
+  next.minor += totalBet * SLOT_CONFIG.contributionRates.minor;
+  next.major += totalBet * SLOT_CONFIG.contributionRates.major;
+  next.grand += totalBet * SLOT_CONFIG.contributionRates.grand;
+  return next;
+}
 
 /** ---------------------------
  *  CONNECT-4 LOGIC
@@ -487,7 +858,7 @@ function Meter({ label, value, max, color, warnAt, dangerAt }) {
   );
 }
 
-function Switch({ label, value, onChange }) {
+function Switch({ label, value, actionId, onToggle }) {
   return (
     <div className="panel p-[1.4vmin] flex items-center justify-between">
       <div className="text-[1.35vmin] opacity-90">{label}</div>
@@ -497,8 +868,9 @@ function Switch({ label, value, onChange }) {
           role="switch"
           aria-checked={value}
           tabIndex={0}
-          onClick={() => onChange(!value)}
-          onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onChange(!value); }}
+          data-action={actionId}
+          onClick={onToggle}
+          onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onToggle(); }}
         >
           <div className="switch-knob" />
         </div>
@@ -636,9 +1008,11 @@ function makeStoreItems(upgrades) {
 function App() {
   const rotationRef = useRef({ wheelEl: null });
   const glitchHostRef = useRef(null);
+  const slotSpinRef = useRef({ timeouts: [] });
 
-  // Screens: lobby | game | knct4 | store | settings
+  // Screens: lobby | game | knct4 | slot | store | settings
   const [screen, setScreen] = useState("lobby");
+  const screenRef = useRef("lobby");
   const [iconSet, setIconSet] = useState({});
 
   const supabaseClient = useMemo(() => {
@@ -681,6 +1055,49 @@ function App() {
   const [knctLastResult, setKnctLastResult] = useState(
     () => loadJSON(LS_KEYS.knctLastResult, null)
   );
+  const [slotCredits, setSlotCredits] = useState(
+    () => safeParseInt(localStorage.getItem(LS_KEYS.slotCredits), 1000)
+  );
+  const [slotBetPerLine, setSlotBetPerLine] = useState(
+    () => clamp(safeParseInt(localStorage.getItem(LS_KEYS.slotBetPerLine), 1), 1, 10)
+  );
+  const [slotMeters, setSlotMeters] = useState(
+    () => loadJSON(LS_KEYS.slotMeters, makeDefaultMeters())
+  );
+  const [slotLiteMode, setSlotLiteMode] = useState(
+    () => loadJSON(LS_KEYS.slotLiteMode, false)
+  );
+  const [slotLog, setSlotLog] = useState(
+    () => loadJSON(LS_KEYS.slotLog, [])
+  );
+  const [slotLastOutcome, setSlotLastOutcome] = useState(
+    () => loadJSON(LS_KEYS.slotLastOutcome, null)
+  );
+  const [slotLastSeen, setSlotLastSeen] = useState(
+    () => localStorage.getItem(LS_KEYS.slotLastSeen) !== "false"
+  );
+  const [slotSeed, setSlotSeed] = useState(
+    () => safeParseInt(localStorage.getItem(LS_KEYS.slotSeed), 1337)
+  );
+  const [slotGrid, setSlotGrid] = useState(
+    () => slotLastOutcome?.grid || buildGridFromStops([0, 1, 2, 3, 4], SLOT_CONFIG.reels)
+  );
+  const [slotPrevGrid, setSlotPrevGrid] = useState(
+    () => slotLastOutcome?.grid || buildGridFromStops([0, 1, 2, 3, 4], SLOT_CONFIG.reels)
+  );
+  const [slotLineWins, setSlotLineWins] = useState(() => slotLastOutcome?.lineWins || []);
+  const [slotTotalWin, setSlotTotalWin] = useState(() => slotLastOutcome?.totalWin || 0);
+  const [slotScatterWin, setSlotScatterWin] = useState(() => slotLastOutcome?.scatterWin || 0);
+  const [slotIsSpinning, setSlotIsSpinning] = useState(false);
+  const [slotRevealReels, setSlotRevealReels] = useState(5);
+  const [slotWinLevel, setSlotWinLevel] = useState("none");
+  const [slotBonusState, setSlotBonusState] = useState(null);
+  const [slotRulesOpen, setSlotRulesOpen] = useState(false);
+  const [slotSimStats, setSlotSimStats] = useState(null);
+  const [debugOpen, setDebugOpen] = useState(false);
+  const [debugReport, setDebugReport] = useState({ missingAction: [], missingHandler: [] });
+  const [selfTestResults, setSelfTestResults] = useState([]);
+  const [userInteracted, setUserInteracted] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -727,6 +1144,35 @@ function App() {
     const v = clamp(Number(settings.uiIntensity || 1), 0.6, 1.2);
     document.documentElement.style.setProperty("--ui-intensity", String(v));
   }, [settings.uiIntensity]);
+
+  useEffect(() => {
+    screenRef.current = screen;
+  }, [screen]);
+
+  useEffect(() => {
+    try { localStorage.setItem(LS_KEYS.slotCredits, String(slotCredits)); } catch (_) {}
+  }, [slotCredits]);
+  useEffect(() => {
+    try { localStorage.setItem(LS_KEYS.slotBetPerLine, String(slotBetPerLine)); } catch (_) {}
+  }, [slotBetPerLine]);
+  useEffect(() => {
+    saveJSON(LS_KEYS.slotMeters, slotMeters);
+  }, [slotMeters]);
+  useEffect(() => {
+    saveJSON(LS_KEYS.slotLiteMode, slotLiteMode);
+  }, [slotLiteMode]);
+  useEffect(() => {
+    saveJSON(LS_KEYS.slotLog, slotLog);
+  }, [slotLog]);
+  useEffect(() => {
+    saveJSON(LS_KEYS.slotLastOutcome, slotLastOutcome);
+  }, [slotLastOutcome]);
+  useEffect(() => {
+    try { localStorage.setItem(LS_KEYS.slotLastSeen, String(slotLastSeen)); } catch (_) {}
+  }, [slotLastSeen]);
+  useEffect(() => {
+    try { localStorage.setItem(LS_KEYS.slotSeed, String(slotSeed)); } catch (_) {}
+  }, [slotSeed]);
 
   // Build sector pool depending on store purchases
   const sectors = useMemo(() => {
@@ -1942,14 +2388,17 @@ function App() {
   const SparklesIcon = iconSet.Sparkles;
   const LayersIcon = iconSet.Layers;
   const CircleDotIcon = iconSet.CircleDot;
+  const SlotIcon = iconSet.Dice5 || iconSet.Dices || iconSet.Coins;
 
   function navButton(id, label) {
     const active = screen === id;
+    const actionId = `nav-${id}`;
     return (
       <button
         className="xg-btn"
         style={active ? { background: "rgba(0,255,255,0.18)", borderColor: "rgba(0,255,255,0.35)" } : null}
-        onClick={() => { setScreen(id); pushLog("SYS", `Opened ${label}.`); glitchPulse(0.18); }}
+        data-action={actionId}
+        onClick={() => runAction(actionId)}
       >
         {label}
       </button>
@@ -1967,43 +2416,504 @@ function App() {
   }
 
   /** ---------------------------
+   *  SLOT HELPERS
+   *  --------------------------- */
+  const slotTotalBet = slotBetPerLine * SLOT_CONFIG.paylines.length;
+
+  function pushSlotLog(entry) {
+    setSlotLog((prev) => {
+      const next = [entry, ...prev];
+      return next.slice(0, 20);
+    });
+  }
+
+  function updateSlotCredits(next) {
+    setSlotCredits(Math.max(0, Math.round(next)));
+  }
+
+  function adjustSlotCredits(delta) {
+    setSlotCredits((prev) => Math.max(0, Math.round(prev + delta)));
+  }
+
+  function applySpinCredits(credits, totalBet, totalWin) {
+    return Math.max(0, Math.round(credits - totalBet + totalWin));
+  }
+
+  function canAffordSpin(credits, totalBet) {
+    return credits >= totalBet;
+  }
+
+  function updateSlotBet(next) {
+    setSlotBetPerLine(clamp(next, 1, 10));
+  }
+
+  function classifyWin(totalWin, totalBet) {
+    if (totalWin >= totalBet * 20) return "mega";
+    if (totalWin >= totalBet * 10) return "big";
+    if (totalWin > 0) return "small";
+    return "none";
+  }
+
+  function clearSlotTimeouts() {
+    slotSpinRef.current.timeouts.forEach((t) => clearTimeout(t));
+    slotSpinRef.current.timeouts = [];
+  }
+
+  function markSlotSeen() {
+    setSlotLastSeen(true);
+  }
+
+  function performSlotSpin(rng, meters) {
+    const baseOutcome = spinBaseGame({
+      rng,
+      betPerLine: slotBetPerLine,
+      meters,
+    });
+    let totalWin = baseOutcome.totalWin;
+    let bonus = null;
+    let metersNext = meters;
+
+    if (baseOutcome.triggerBonus) {
+      const bonusResult = runHoldAndSpin({
+        rng,
+        baseGrid: baseOutcome.grid,
+        meters,
+        betPerLine: slotBetPerLine,
+      });
+      bonus = bonusResult;
+      totalWin += bonusResult.totalWin;
+      metersNext = bonusResult.meters;
+    }
+
+    return {
+      ...baseOutcome,
+      totalWin,
+      bonus,
+      metersNext,
+      totalBet: slotTotalBet,
+      betPerLine: slotBetPerLine,
+    };
+  }
+
+  function startSlotSpin() {
+    if (slotIsSpinning || slotBonusState) return;
+    if (!canAffordSpin(slotCredits, slotTotalBet)) {
+      pushSlotLog({ t: "ERR", m: "Insufficient credits for spin." });
+      playTone(220, 120, settings.sound && userInteracted);
+      vibrate([0, 40], settings.haptics);
+      return;
+    }
+
+    setSlotIsSpinning(true);
+    setSlotRevealReels(0);
+    setSlotWinLevel("none");
+    setSlotScatterWin(0);
+    setSlotLineWins([]);
+    setSlotTotalWin(0);
+    setSlotBonusState(null);
+    setSlotPrevGrid(slotGrid);
+
+    const metersAfter = contributeMeters(slotMeters, slotTotalBet);
+    setSlotMeters(metersAfter);
+
+    adjustSlotCredits(-slotTotalBet);
+    const rng = makeRng();
+    const outcome = performSlotSpin(rng, metersAfter);
+    const finalMeters = outcome.metersNext;
+
+    setSlotMeters(finalMeters);
+    setSlotLastOutcome(outcome);
+    setSlotLastSeen(false);
+    pushSlotLog({
+      t: outcome.totalWin > 0 ? "WIN" : "MISS",
+      m: `Bet ${slotTotalBet} | Win ${outcome.totalWin}${outcome.triggerBonus ? " + BONUS" : ""}`,
+    });
+
+    setSlotGrid(outcome.grid);
+    setSlotLineWins(outcome.lineWins);
+    setSlotScatterWin(outcome.scatterWin);
+    setSlotTotalWin(outcome.totalWin);
+    setSlotBonusState(outcome.bonus);
+    setSlotWinLevel(classifyWin(outcome.totalWin, slotTotalBet));
+
+    clearSlotTimeouts();
+    const revealDelays = [260, 420, 560, 720, 880];
+    revealDelays.forEach((delay, idx) => {
+      const t = setTimeout(() => setSlotRevealReels(idx + 1), delay);
+      slotSpinRef.current.timeouts.push(t);
+    });
+    const endTimer = setTimeout(() => {
+      setSlotIsSpinning(false);
+      setSlotLastSeen(true);
+      adjustSlotCredits(outcome.totalWin);
+      playTone(outcome.totalWin > 0 ? 520 : 260, 120, settings.sound && userInteracted);
+      if (outcome.totalWin > 0) vibrate([0, 40, 30, 40], settings.haptics);
+    }, 1050);
+    slotSpinRef.current.timeouts.push(endTimer);
+  }
+
+  function setSlotCreditsTo(value) {
+    updateSlotCredits(value);
+    pushSlotLog({ t: "SYS", m: `Credits set to ${value}.` });
+  }
+
+  function resetSlotMeters() {
+    setSlotMeters(makeDefaultMeters());
+    pushSlotLog({ t: "SYS", m: "Jackpot meters reset." });
+  }
+
+  function runSlotSimulation(spins) {
+    const rng = makeSeededRng(slotSeed);
+    let wagered = 0;
+    let returned = 0;
+    let bonusHits = 0;
+    let lineHits = 0;
+    let scatterHits = 0;
+    for (let i = 0; i < spins; i += 1) {
+      const outcome = spinBaseGame({ rng, betPerLine: slotBetPerLine, meters: slotMeters });
+      wagered += slotTotalBet;
+      returned += outcome.totalWin;
+      if (outcome.lineWins.length) lineHits += 1;
+      if (outcome.scatterWin > 0) scatterHits += 1;
+      if (outcome.triggerBonus) bonusHits += 1;
+    }
+    const stats = {
+      spins,
+      wagered,
+      returned,
+      rtp: wagered > 0 ? (returned / wagered) : 0,
+      lineHits,
+      scatterHits,
+      bonusHits,
+      seed: slotSeed,
+    };
+    setSlotSimStats(stats);
+  }
+
+  function describeElement(el) {
+    const tag = el.tagName.toLowerCase();
+    const action = el.getAttribute("data-action") || "none";
+    const id = el.id ? `#${el.id}` : "";
+    const cls = el.className ? `.${String(el.className).split(" ").filter(Boolean).join(".")}` : "";
+    return `${tag}${id}${cls} [${action}]`;
+  }
+
+  function clearActionHighlights() {
+    document.querySelectorAll(".missing-action").forEach((el) => el.classList.remove("missing-action"));
+    document.querySelectorAll(".missing-handler").forEach((el) => el.classList.remove("missing-handler"));
+  }
+
+  function scanActionAudit(actionHandlers) {
+    clearActionHighlights();
+    const missingAction = [];
+    const missingHandler = [];
+    const handlerSet = new Set(Object.keys(actionHandlers));
+    const elements = Array.from(document.querySelectorAll("button, [role='button'], [role='switch'], input, select, textarea"));
+    elements.forEach((el) => {
+      const action = el.getAttribute("data-action");
+      if (!action) {
+        missingAction.push(describeElement(el));
+        el.classList.add("missing-action");
+        return;
+      }
+      if (!handlerSet.has(action)) {
+        missingHandler.push(action);
+        el.classList.add("missing-handler");
+      }
+    });
+    setDebugReport({
+      missingAction,
+      missingHandler: Array.from(new Set(missingHandler)),
+    });
+  }
+
+  async function runSelfTests(actionHandlers) {
+    const results = [];
+    const add = (name, pass, detail) => results.push({ name, pass, detail });
+    const countBonusOrbs = (grid) => grid.reduce((sum, row) => sum + row.filter(Boolean).length, 0);
+
+    const rngA = makeSeededRng(12345);
+    const rngB = makeSeededRng(12345);
+    const outA = spinBaseGame({ rng: rngA, betPerLine: 2, meters: makeDefaultMeters() });
+    const outB = spinBaseGame({ rng: rngB, betPerLine: 2, meters: makeDefaultMeters() });
+    add("RNG determinism", JSON.stringify(outA.reelStops) === JSON.stringify(outB.reelStops), "Stops match on same seed.");
+
+    const testGrid = [
+      ["A","A","A","A","A"],
+      ["A","A","A","A","A"],
+      ["A","A","A","A","A"],
+    ];
+    const lineWins = evaluatePaylines(testGrid, SLOT_CONFIG.paylines, SLOT_CONFIG.paytable, 2);
+    add("Payline evaluation", lineWins.length > 0, `Lines paid: ${lineWins.length}.`);
+    const topLineWin = lineWins.find((w) => w.lineIndex === 0);
+    add(
+      "Payout correctness",
+      !!topLineWin && topLineWin.payout === SLOT_CONFIG.paytable.A[5] * 2,
+      `Line 0 payout ${topLineWin ? topLineWin.payout : 0}.`
+    );
+
+    const scatterGrid = [
+      ["SCATTER","A","A","A","A"],
+      ["A","SCATTER","A","A","A"],
+      ["A","A","SCATTER","A","A"],
+    ];
+    const scatter = calcScatterWin(scatterGrid, SLOT_CONFIG.scatterPay, 100);
+    add("Scatter payout", scatter.win > 0, `Scatter win ${scatter.win}.`);
+
+    const wildGrid = [
+      ["WILD","WILD","WILD","A","A"],
+      ["A","A","A","A","A"],
+      ["A","A","A","A","A"],
+    ];
+    const wildWins = evaluatePaylines(wildGrid, SLOT_CONFIG.paylines, SLOT_CONFIG.paytable, 1);
+    add("Wild substitution", wildWins.length > 0, "Wilds form a win.");
+
+    const orbGrid = [
+      ["WILD","SCATTER","A","A","A"],
+      ["A","A","A","A","A"],
+      ["A","A","A","A","A"],
+    ];
+    const injected = injectOrbs(orbGrid, makeSeededRng(7), 1);
+    add("Orb injection safety", injected.grid[0][0] === "WILD" && injected.grid[0][1] === "SCATTER", "Wild/Scatter preserved.");
+
+    const meters = makeDefaultMeters();
+    const jackpot = applyJackpot(meters, "mini");
+    add("Jackpot award", jackpot.award === meters.mini && jackpot.meters.mini === SLOT_CONFIG.jackpotSeed.mini, "Jackpot resets after award.");
+
+    const bonus = runHoldAndSpin({
+      rng: makeSeededRng(11),
+      baseGrid: [
+        ["ORB","ORB","ORB","A","A"],
+        ["A","A","A","A","A"],
+        ["A","A","A","A","A"],
+      ],
+      meters: makeDefaultMeters(),
+      betPerLine: 2,
+    });
+    add("Bonus resolves", bonus.totalWin >= 0, `Bonus total ${bonus.totalWin}.`);
+
+    const rngAlways = { nextFloat: () => 0, nextInt: () => 0 };
+    const bonusFill = runHoldAndSpin({
+      rng: rngAlways,
+      baseGrid: [
+        ["A","A","A","A","A"],
+        ["A","A","A","A","A"],
+        ["A","A","A","A","A"],
+      ],
+      meters: makeDefaultMeters(),
+      betPerLine: 10,
+    });
+    add("Bonus respin reset", countBonusOrbs(bonusFill.grid) === 15, "Respin fills all cells with guaranteed hits.");
+
+    add("Bet math", slotTotalBet === slotBetPerLine * SLOT_CONFIG.paylines.length, `Total bet ${slotTotalBet}.`);
+
+    const creditCalc = applySpinCredits(500, 50, 120);
+    add("Bet deduction + payout", creditCalc === 570, `Credits after spin ${creditCalc}.`);
+    add("Win classification", classifyWin(500, 20) === "mega" && classifyWin(120, 20) === "big", "Win tiers resolve.");
+
+    add("Credits gate", !canAffordSpin(10, 50) && canAffordSpin(100, 50), "Spin blocks when credits low.");
+
+    if (actionHandlers["nav-slot"] && actionHandlers["nav-lobby"]) {
+      actionHandlers["nav-slot"]();
+      await new Promise((r) => setTimeout(r, 0));
+      const afterSlot = screenRef.current === "slot";
+      actionHandlers["nav-lobby"]();
+      await new Promise((r) => setTimeout(r, 0));
+      add("Navigation: lobby → slot → lobby", afterSlot && screenRef.current === "lobby", `Screen now ${screenRef.current}.`);
+    } else {
+      add("Navigation: lobby → slot → lobby", false, "Missing nav handlers.");
+    }
+
+    setSelfTestResults(results);
+  }
+
+  function openScreen(id, label) {
+    setScreen(id);
+    pushLog("SYS", `Opened ${label}.`);
+    glitchPulse(0.18);
+  }
+
+  const actionHandlers = {
+    "nav-lobby": () => openScreen("lobby", "Lobby"),
+    "nav-knct4": () => openScreen("knct4", "Connect-4"),
+    "nav-slot": () => openScreen("slot", "Slot Machine"),
+    "nav-store": () => openScreen("store", "Store"),
+    "nav-settings": () => openScreen("settings", "Settings"),
+    "nav-game": () => openScreen("game", "Run"),
+    "lobby-start-sequencer": () => startNewRun(),
+    "lobby-open-slot": () => openScreen("slot", "Slot Machine"),
+    "lobby-open-knct4": () => openScreen("knct4", "Connect-4"),
+    "lobby-open-store": () => openScreen("store", "Store"),
+    "lobby-open-settings": () => openScreen("settings", "Settings"),
+    "lobby-start-run": () => startNewRun(),
+    "mp-create-knct4": () => createRoom("knct4"),
+    "mp-join-knct4": () => openJoinModal("knct4"),
+    "mp-create-race": () => createRoom("race"),
+    "mp-join-race": () => openJoinModal("race"),
+    "mp-copy-code": () => copyRoomCode(mpStatus.roomCode),
+    "mp-leave-room": () => leaveRoom("manual"),
+    "settings-toggle-haptics": () => persistSettings({ haptics: !settings.haptics }),
+    "settings-toggle-sound": () => persistSettings({ sound: !settings.sound }),
+    "settings-toggle-reduced-motion": () => persistSettings({ reducedMotion: !settings.reducedMotion }),
+    "settings-slot-lite": () => setSlotLiteMode((v) => !v),
+    "settings-difficulty": (payload) => {
+      const preset = difficultyPreset(payload.value);
+      persistSettings({ difficulty: payload.value, maxCycles: preset.maxCycles });
+    },
+    "settings-max-cycles": (payload) => persistSettings({ maxCycles: payload.value }),
+    "settings-ui-intensity": (payload) => persistSettings({ uiIntensity: payload.value }),
+    "settings-reset-progress": () => resetProgress(),
+    "settings-reset-defaults": () => persistSettings(DEFAULT_SETTINGS),
+    "settings-back-lobby": () => openScreen("lobby", "Lobby"),
+    "store-buy": (payload) => {
+      const item = storeItems.find((it) => it.id === payload.id);
+      if (item) buyItem(item);
+    },
+    "store-back-lobby": () => openScreen("lobby", "Lobby"),
+    "game-anomaly-stability": () => chooseAnomaly("STABILITY"),
+    "game-anomaly-stealth": () => chooseAnomaly("STEALTH"),
+    "game-anomaly-purge": () => chooseAnomaly("PURGE"),
+    "game-anomaly-embrace": () => chooseAnomaly("EMBRACE"),
+    "game-copy-code": () => copyRoomCode(mpStatus.roomCode),
+    "game-leave-room": () => leaveRoom("manual"),
+    "game-bias-minus": () => useBias(-1),
+    "game-bias-plus": () => useBias(1),
+    "game-patch": () => usePatch(),
+    "game-spin": () => spinSequencer(),
+    "game-abort": () => abortToLobby(),
+    "game-abort-return": () => abortToLobby(),
+    "game-action-extract": () => actionExtract(),
+    "game-action-reroute": () => actionReroute(),
+    "game-action-vent": () => actionVent(),
+    "game-action-ghost": () => actionGhost(),
+    "game-action-buffer": () => actionBuffer(),
+    "knct-drop": (payload) => handleKnctDrop(payload.col),
+    "knct-reset-match": () => resetKnctMatch(),
+    "knct-next-match": () => startNextKnctMatch(),
+    "knct-back-lobby": () => openScreen("lobby", "Lobby"),
+    "knct-open-settings": () => openScreen("settings", "Settings"),
+    "knct-copy-code": () => copyRoomCode(mpStatus.roomCode),
+    "knct-leave-room": () => leaveRoom("manual"),
+    "knct-leave-room-footer": () => leaveRoom("manual"),
+    "knct-reset-scores": () => resetKnctScores(),
+    "knct-chipset": (payload) => updateKnctChipSet(payload.id),
+    "knct-hover-set": (payload) => setKnctHoverCol(payload.col),
+    "knct-hover-clear": () => setKnctHoverCol(null),
+    "modal-room-full-ok": () => setMpStatus((s) => ({ ...s, error: null })),
+    "modal-join-cancel": () => setMpJoinModal({ open: false, mode: null, code: "" }),
+    "modal-join-submit": () => submitJoin(),
+    "modal-join-input": (payload) => setMpJoinModal((s) => ({ ...s, code: normalizeRoomCode(payload.value) })),
+    "slot-spin": () => startSlotSpin(),
+    "slot-bet-up": () => updateSlotBet(slotBetPerLine + 1),
+    "slot-bet-down": () => updateSlotBet(slotBetPerLine - 1),
+    "slot-bet-max": () => updateSlotBet(10),
+    "slot-back-lobby": () => openScreen("lobby", "Lobby"),
+    "slot-toggle-rules": () => setSlotRulesOpen((v) => !v),
+    "slot-toggle-lite": () => setSlotLiteMode((v) => !v),
+    "slot-ack-last": () => markSlotSeen(),
+    "debug-toggle": () => setDebugOpen((v) => !v),
+    "debug-scan": () => scanActionAudit(actionHandlers),
+    "debug-run-tests": () => runSelfTests(actionHandlers),
+    "debug-run-sim": () => runSlotSimulation(10000),
+    "debug-set-seed": (payload) => setSlotSeed(safeParseInt(payload.value, slotSeed)),
+    "debug-set-credits": (payload) => setSlotCreditsTo(safeParseInt(payload.value, slotCredits)),
+    "debug-reset-meters": () => resetSlotMeters(),
+  };
+
+  function runAction(actionId, payload) {
+    setUserInteracted(true);
+    const handler = actionHandlers[actionId];
+    if (handler) {
+      handler(payload || {});
+    } else {
+      pushLog("ERR", `No handler for ${actionId}.`);
+    }
+  }
+
+  useEffect(() => {
+    if (!debugOpen) {
+      clearActionHighlights();
+      return;
+    }
+    const t = setTimeout(() => scanActionAudit(actionHandlers), 60);
+    return () => clearTimeout(t);
+  }, [debugOpen, screen, slotRulesOpen, mpJoinModal.open]);
+
+  useEffect(() => {
+    return () => clearSlotTimeouts();
+  }, []);
+
+  /** ---------------------------
    *  RENDER SCREENS
    *  --------------------------- */
   function LobbyScreen() {
     return (
       <div className="grid grid-cols-1 md:grid-cols-[1.15fr_0.85fr] gap-[1.6vmin] min-h-0 lobby-screen">
         <div className="panel p-[2vmin] min-h-0 flex flex-col lobby-hero">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-[1.2vmin] flex-wrap">
             <div className="os-title text-[1.8vmin]" style={{ color: PALETTE.blue }}>MAIN LOBBY</div>
-            <div className="text-[1.25vmin] opacity-80">
-              Credits: <span style={{ color: PALETTE.green }}>{geneCredits}</span>{" "}
-              | Best: <span style={{ color: PALETTE.blue }}>{bestRun}</span>
+            <div className="flex items-center gap-[0.8vmin] flex-wrap">
+              <div className="status-chip">
+                Credits <span style={{ color: PALETTE.green }}>{geneCredits}</span>
+              </div>
+              <div className="status-chip">
+                Sound <span style={{ color: settings.sound ? PALETTE.blue : "rgba(255,140,0,0.88)" }}>{settings.sound ? "ON" : "OFF"}</span>
+              </div>
+              <div className="status-chip">
+                Vibe <span style={{ color: PALETTE.green }}>{settings.reducedMotion ? "LITE" : "FULL"}</span>
+              </div>
             </div>
           </div>
+          <div className="hud-sweep my-[0.8vmin]" />
           <div className="hr-scan my-[1.2vmin]" />
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-[1.2vmin]">
             <div className="panel-2 p-[1.8vmin] md:col-span-2 lobby-accent lobby-banner">
               <div className="os-title text-[1.35vmin]" style={{ color: PALETTE.green }}>GAME BAY</div>
-              <div className="mt-[1.2vmin] grid grid-cols-1 md:grid-cols-2 gap-[1.2vmin]">
+              <div className="mt-[1.2vmin] grid grid-cols-1 md:grid-cols-3 gap-[1.2vmin]">
                 <div className="game-card">
                   <div className="flex items-center gap-[1.0vmin]">
                     <div className="game-icon">
                       <IconBadge icon={DnaIcon} label="DNA" color={PALETTE.green} className="game-icon-svg" />
                     </div>
                     <div>
-                      <div className="os-title text-[1.3vmin]" style={{ color: PALETTE.green }}>SEQUENCER WHEEL</div>
-                      <div className="text-[1.2vmin] opacity-80">Bio-lab extraction runs</div>
+                      <div className="os-title text-[1.3vmin]" style={{ color: PALETTE.green }}>SEQUENCER RUN</div>
+                      <div className="text-[1.2vmin] opacity-80">Strategic extraction loop</div>
                     </div>
                   </div>
                   <div className="mt-[1.0vmin] text-[1.25vmin] opacity-85">
-                    Spin the sequencer, stack mutagens, and extract with stealth discipline.
+                    Spin the wheel, manage stability, and extract under pressure.
                   </div>
-                  <button className="xg-btn w-full mt-[1.2vmin]" onClick={startNewRun}>
+                  <button
+                    className="xg-btn w-full mt-[1.2vmin]"
+                    data-action="lobby-start-sequencer"
+                    onClick={() => runAction("lobby-start-sequencer")}
+                  >
                     Enter Sequencer
                   </button>
                 </div>
 
+                <div className="game-card featured-card">
+                  <div className="flex items-center gap-[1.0vmin]">
+                    <div className="game-icon">
+                      <IconBadge icon={SlotIcon} label="SLOT" color={PALETTE.blue} className="game-icon-svg" />
+                    </div>
+                    <div>
+                      <div className="os-title text-[1.3vmin]" style={{ color: PALETTE.blue }}>SLOT MACHINE</div>
+                      <div className="text-[1.2vmin] opacity-80">Fast spins, bonus orbs</div>
+                    </div>
+                  </div>
+                  <div className="mt-[1.0vmin] text-[1.25vmin] opacity-85">
+                    Spin the reels, trigger hold-and-spin, and chase jackpots.
+                  </div>
+                  <button
+                    className="xg-btn w-full mt-[1.2vmin]"
+                    data-action="lobby-open-slot"
+                    onClick={() => runAction("lobby-open-slot")}
+                  >
+                    Play Slot Machine
+                  </button>
+                </div>
 
                 <div className="game-card">
                   <div className="flex items-center gap-[1.0vmin]">
@@ -2012,13 +2922,17 @@ function App() {
                     </div>
                     <div>
                       <div className="os-title text-[1.3vmin]" style={{ color: PALETTE.blue }}>CONNECT-4</div>
-                      <div className="text-[1.2vmin] opacity-80">Two-player drop duel</div>
+                      <div className="text-[1.2vmin] opacity-80">Drop chips, block rivals</div>
                     </div>
                   </div>
                   <div className="mt-[1.0vmin] text-[1.25vmin] opacity-85">
-                    Drop chips, build a 4-in-a-row chain, and block your rival.
+                    Place chips to connect four and deny the next move.
                   </div>
-                  <button className="xg-btn w-full mt-[1.2vmin]" onClick={() => setScreen("knct4")}>
+                  <button
+                    className="xg-btn w-full mt-[1.2vmin]"
+                    data-action="lobby-open-knct4"
+                    onClick={() => runAction("lobby-open-knct4")}
+                  >
                     Launch Connect-4
                   </button>
                 </div>
@@ -2032,16 +2946,44 @@ function App() {
                   <div className="os-title text-[1.2vmin]" style={{ color: PALETTE.blue }}>CONNECT-4 HEAD-TO-HEAD</div>
                   <div className="mt-[0.6vmin] text-[1.15vmin] opacity-80">Private room, 2 players, turn-based.</div>
                   <div className="mp-row mt-[0.8vmin]">
-                    <button className="xg-btn" disabled={!mpStatus.configured || !mpUserId} onClick={() => createRoom("knct4")}>Create Room</button>
-                    <button className="xg-btn" disabled={!mpStatus.configured || !mpUserId} onClick={() => openJoinModal("knct4")}>Join by Code</button>
+                    <button
+                      className="xg-btn"
+                      disabled={!mpStatus.configured || !mpUserId}
+                      data-action="mp-create-knct4"
+                      onClick={() => runAction("mp-create-knct4")}
+                    >
+                      Create Room
+                    </button>
+                    <button
+                      className="xg-btn"
+                      disabled={!mpStatus.configured || !mpUserId}
+                      data-action="mp-join-knct4"
+                      onClick={() => runAction("mp-join-knct4")}
+                    >
+                      Join by Code
+                    </button>
                   </div>
                 </div>
                 <div className="mp-card">
                   <div className="os-title text-[1.2vmin]" style={{ color: PALETTE.green }}>SEQUENCER RACE</div>
                   <div className="mt-[0.6vmin] text-[1.15vmin] opacity-80">First to extract wins. Real-time status.</div>
                   <div className="mp-row mt-[0.8vmin]">
-                    <button className="xg-btn" disabled={!mpStatus.configured || !mpUserId} onClick={() => createRoom("race")}>Create Room</button>
-                    <button className="xg-btn" disabled={!mpStatus.configured || !mpUserId} onClick={() => openJoinModal("race")}>Join by Code</button>
+                    <button
+                      className="xg-btn"
+                      disabled={!mpStatus.configured || !mpUserId}
+                      data-action="mp-create-race"
+                      onClick={() => runAction("mp-create-race")}
+                    >
+                      Create Room
+                    </button>
+                    <button
+                      className="xg-btn"
+                      disabled={!mpStatus.configured || !mpUserId}
+                      data-action="mp-join-race"
+                      onClick={() => runAction("mp-join-race")}
+                    >
+                      Join by Code
+                    </button>
                   </div>
                 </div>
                 {mpStatus.connected && (
@@ -2050,8 +2992,8 @@ function App() {
                       Room <span style={{ color: PALETTE.blue }}>{mpStatus.roomCode}</span> | Role <span style={{ color: PALETTE.green }}>{mpStatus.role}</span>
                     </div>
                     <div className="mp-row mt-[0.6vmin]">
-                      <button className="xg-btn" onClick={() => copyRoomCode(mpStatus.roomCode)}>Copy Code</button>
-                      <button className="xg-btn" onClick={() => leaveRoom("manual")}>Leave Room</button>
+                      <button className="xg-btn" data-action="mp-copy-code" onClick={() => runAction("mp-copy-code")}>Copy Code</button>
+                      <button className="xg-btn" data-action="mp-leave-room" onClick={() => runAction("mp-leave-room")}>Leave Room</button>
                     </div>
                   </div>
                 )}
@@ -2069,13 +3011,13 @@ function App() {
               </div>
 
               <div className="mt-[1.4vmin] grid grid-cols-1 gap-[1.0vmin]">
-                <button className="xg-btn" onClick={startNewRun}>
+                <button className="xg-btn" data-action="lobby-start-run" onClick={() => runAction("lobby-start-run")}>
                   Start Extraction Run
                 </button>
-                <button className="xg-btn" onClick={() => setScreen("store")}>
+                <button className="xg-btn" data-action="lobby-open-store" onClick={() => runAction("lobby-open-store")}>
                   Open Store
                 </button>
-                <button className="xg-btn" onClick={() => setScreen("settings")}>
+                <button className="xg-btn" data-action="lobby-open-settings" onClick={() => runAction("lobby-open-settings")}>
                   Settings
                 </button>
               </div>
@@ -2136,12 +3078,192 @@ function App() {
     );
   }
 
+  function SlotScreen() {
+    const effectsLite = slotLiteMode || settings.reducedMotion;
+    const winCells = useMemo(() => {
+      const cells = new Set();
+      slotLineWins.forEach((win) => {
+        const line = SLOT_CONFIG.paylines[win.lineIndex];
+        for (let i = 0; i < win.count; i += 1) {
+          const row = line[i];
+          cells.add(`${row}-${i}`);
+        }
+      });
+      return cells;
+    }, [slotLineWins]);
+
+    const scatterCount = countSymbol(slotGrid, "SCATTER");
+    const particles = useMemo(() => {
+      if (slotWinLevel === "none" || effectsLite) return [];
+      return Array.from({ length: 18 }, (_, i) => ({
+        id: i,
+        left: `${(i * 13) % 100}%`,
+        delay: `${(i % 6) * 0.08}s`,
+      }));
+    }, [slotWinLevel, effectsLite]);
+
+    return (
+      <div className={`slot-screen ${slotWinLevel !== "none" ? "slot-win" : ""}`}>
+        <div className="panel p-[1.6vmin] flex items-center justify-between flex-wrap gap-[1.0vmin]">
+          <div>
+            <div className="os-title text-[1.8vmin]" style={{ color: PALETTE.blue }}>SLOT MACHINE</div>
+            <div className="text-[1.25vmin] opacity-80">
+              5x3 reels | 50 lines | Hold-and-Spin bonus
+            </div>
+          </div>
+          <div className="slot-status">
+            <div className="status-chip">Credits <span style={{ color: PALETTE.green }}>{slotCredits}</span></div>
+            <div className="status-chip">Bet <span style={{ color: PALETTE.blue }}>{slotTotalBet}</span></div>
+            <div className="status-chip">Best Run <span style={{ color: PALETTE.blue }}>{bestRun}</span></div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-[1.1fr_0.9fr] gap-[1.6vmin] mt-[1.6vmin]">
+          <div className="panel-2 p-[1.8vmin] slot-reel-panel">
+            <div className={`slot-banner ${slotWinLevel}`}>
+              {slotWinLevel === "none" ? "Awaiting spin" : `WIN ${slotTotalWin}`}
+            </div>
+            <div className="slot-reels">
+              {slotGrid.map((row, rIdx) => (
+                <div key={`row-${rIdx}`} className="slot-row">
+                  {row.map((_, cIdx) => {
+                    const symbol = slotIsSpinning && cIdx >= slotRevealReels ? slotPrevGrid[rIdx][cIdx] : slotGrid[rIdx][cIdx];
+                    const meta = SLOT_SYMBOLS[symbol] || SLOT_SYMBOLS.A;
+                    const isWin = winCells.has(`${rIdx}-${cIdx}`);
+                    return (
+                      <div
+                        key={`cell-${rIdx}-${cIdx}`}
+                        className={`slot-cell ${slotIsSpinning && !effectsLite ? "spinning" : ""} ${isWin ? "win" : ""}`}
+                      >
+                        <div className={`slot-symbol ${meta.kind}`} style={{ color: meta.color }}>{meta.label}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+            <div className="slot-footer">
+              <div className="text-[1.2vmin] opacity-80">
+                Lines hit: {slotLineWins.length} | Scatter: {scatterCount} | Orbs: {countSymbol(slotGrid, "ORB")}
+              </div>
+            </div>
+            {!effectsLite && particles.length > 0 && (
+              <div className="slot-confetti">
+                {particles.map((p) => (
+                  <div key={p.id} className="confetti" style={{ left: p.left, animationDelay: p.delay }} />
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="panel-2 p-[1.8vmin] flex flex-col gap-[1.2vmin]">
+            <div className="panel p-[1.4vmin]">
+              <div className="os-title text-[1.35vmin]" style={{ color: PALETTE.blue }}>SPIN CONTROLS</div>
+              <div className="mt-[1.0vmin] grid grid-cols-[auto_1fr_auto] gap-[1.0vmin] items-center">
+                <button className="xg-btn" data-action="slot-bet-down" onClick={() => runAction("slot-bet-down")} disabled={slotBetPerLine <= 1 || slotIsSpinning}>-</button>
+                <div className="text-center text-[1.35vmin]">
+                  Bet/Line <span style={{ color: PALETTE.blue }}>{slotBetPerLine}</span> | Total <span style={{ color: PALETTE.green }}>{slotTotalBet}</span>
+                </div>
+                <button className="xg-btn" data-action="slot-bet-up" onClick={() => runAction("slot-bet-up")} disabled={slotBetPerLine >= 10 || slotIsSpinning}>+</button>
+              </div>
+              <div className="mt-[1.0vmin] grid grid-cols-2 gap-[1.0vmin]">
+                <button className="xg-btn" data-action="slot-bet-max" onClick={() => runAction("slot-bet-max")} disabled={slotIsSpinning}>Max Bet</button>
+                <button className="xg-btn" data-action="slot-spin" onClick={() => runAction("slot-spin")} disabled={slotIsSpinning || slotCredits < slotTotalBet}>
+                  {slotIsSpinning ? "Spinning..." : "SPIN"}
+                </button>
+              </div>
+            </div>
+
+            <div className="panel p-[1.4vmin]">
+              <div className="os-title text-[1.35vmin]" style={{ color: PALETTE.green }}>JACKPOT METERS</div>
+              <div className="mt-[0.8vmin] grid grid-cols-2 gap-[0.8vmin] text-[1.2vmin]">
+                <div className="status-chip">Mini <span style={{ color: PALETTE.green }}>{Math.round(slotMeters.mini)}</span></div>
+                <div className="status-chip">Minor <span style={{ color: PALETTE.blue }}>{Math.round(slotMeters.minor)}</span></div>
+                <div className="status-chip">Major <span style={{ color: "rgba(255,140,0,0.9)" }}>{Math.round(slotMeters.major)}</span></div>
+                <div className="status-chip">Grand <span style={{ color: "rgba(255,80,180,0.9)" }}>{Math.round(slotMeters.grand)}</span></div>
+              </div>
+              <div className="mt-[0.8vmin] text-[1.2vmin] opacity-80">
+                Each spin nudges meters. Jackpot orbs can cash them out in bonus.
+              </div>
+            </div>
+
+            <div className="panel p-[1.4vmin]">
+              <div className="os-title text-[1.35vmin]" style={{ color: PALETTE.blue }}>OPTIONS</div>
+              <div className="mt-[0.8vmin] grid grid-cols-2 gap-[0.8vmin]">
+                <button className="xg-btn" data-action="slot-toggle-rules" onClick={() => runAction("slot-toggle-rules")}>
+                  {slotRulesOpen ? "Hide Rules" : "Rules / Payouts"}
+                </button>
+                <button className="xg-btn" data-action="slot-toggle-lite" onClick={() => runAction("slot-toggle-lite")}>
+                  {slotLiteMode ? "Lite Mode: ON" : "Lite Mode: OFF"}
+                </button>
+              </div>
+              <button className="xg-btn w-full mt-[0.8vmin]" data-action="slot-back-lobby" onClick={() => runAction("slot-back-lobby")}>
+                Back to Lobby
+              </button>
+            </div>
+
+            {slotRulesOpen && (
+              <div className="panel p-[1.4vmin]">
+                <div className="os-title text-[1.35vmin]" style={{ color: PALETTE.green }}>RULES & PAYOUTS</div>
+                <div className="mt-[0.8vmin] text-[1.2vmin] opacity-85">
+                  50 paylines, left-to-right. Wild substitutes. Scatter pays anywhere (3+). Orbs trigger Hold-and-Spin at {SLOT_CONFIG.orbTriggerCount}+ orbs.
+                </div>
+                <div className="mt-[0.8vmin] grid grid-cols-2 gap-[0.6vmin] text-[1.1vmin]">
+                  {Object.keys(SLOT_CONFIG.paytable).map((sym) => (
+                    <div key={sym} className="status-chip">
+                      {sym} <span>{SLOT_CONFIG.paytable[sym][3]}/{SLOT_CONFIG.paytable[sym][4]}/{SLOT_CONFIG.paytable[sym][5]}</span>
+                    </div>
+                  ))}
+                  <div className="status-chip">SCAT <span>{SLOT_CONFIG.scatterPay[3]}/{SLOT_CONFIG.scatterPay[4]}/{SLOT_CONFIG.scatterPay[5]}</span></div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {slotBonusState && (
+          <div className="panel-2 p-[1.6vmin] mt-[1.6vmin]">
+            <div className="os-title text-[1.5vmin]" style={{ color: PALETTE.blue }}>HOLD-AND-SPIN RESULT</div>
+            <div className="mt-[0.8vmin] grid grid-cols-5 gap-[0.6vmin] bonus-grid">
+              {slotBonusState.grid.map((row, rIdx) => (
+                row.map((cell, cIdx) => (
+                  <div key={`b-${rIdx}-${cIdx}`} className="bonus-cell">
+                    {cell ? (cell.jackpot ? cell.jackpot.toUpperCase() : cell.value) : "-"}
+                  </div>
+                ))
+              ))}
+            </div>
+            <div className="mt-[0.8vmin] text-[1.2vmin] opacity-85">
+              Bonus Win: <span style={{ color: PALETTE.green }}>{slotBonusState.totalWin}</span>
+              {slotBonusState.jackpotWins.length > 0 && (
+                <span> | Jackpots: {slotBonusState.jackpotWins.map((j) => `${j.tier.toUpperCase()} ${Math.round(j.amount)}`).join(", ")}</span>
+              )}
+            </div>
+          </div>
+        )}
+
+        {!slotLastSeen && slotLastOutcome && !slotIsSpinning && (
+          <div className="modal" style={{ position: "fixed", inset: 0, zIndex: 90, display: "grid", placeItems: "center", background: "rgba(0,0,0,0.68)", backdropFilter: "blur(0.6vmin)" }}>
+            <div className="modal-card">
+              <div className="os-title text-[1.6vmin]" style={{ color: PALETTE.green }}>LAST SPIN RECOVERY</div>
+              <div className="hr-scan my-[1.2vmin]" />
+              <div className="text-[1.25vmin] opacity-85">Total win: {slotLastOutcome.totalWin}. Bonus: {slotLastOutcome.triggerBonus ? "YES" : "NO"}.</div>
+              <div className="panel__actions">
+                <button className="xg-btn" data-action="slot-ack-last" onClick={() => runAction("slot-ack-last")}>Mark as Seen</button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   function SettingsScreen() {
     return (
       <div className="panel p-[2vmin] min-h-0 flex flex-col">
         <div className="flex items-center justify-between">
           <div className="os-title text-[1.8vmin]" style={{ color: PALETTE.blue }}>SETTINGS</div>
-          <button className="xg-btn" onClick={() => setScreen("lobby")}>Back to Lobby</button>
+          <button className="xg-btn" data-action="settings-back-lobby" onClick={() => runAction("settings-back-lobby")}>Back to Lobby</button>
         </div>
         <div className="hr-scan my-[1.2vmin]" />
 
@@ -2149,17 +3271,26 @@ function App() {
           <Switch
             label="Haptics (vibration)"
             value={!!settings.haptics}
-            onChange={(v) => persistSettings({ haptics: v })}
+            actionId="settings-toggle-haptics"
+            onToggle={() => runAction("settings-toggle-haptics")}
           />
           <Switch
             label="Sound (UI tones)"
             value={!!settings.sound}
-            onChange={(v) => persistSettings({ sound: v })}
+            actionId="settings-toggle-sound"
+            onToggle={() => runAction("settings-toggle-sound")}
           />
           <Switch
             label="Reduced Motion (cuts animations)"
             value={!!settings.reducedMotion}
-            onChange={(v) => persistSettings({ reducedMotion: v })}
+            actionId="settings-toggle-reduced-motion"
+            onToggle={() => runAction("settings-toggle-reduced-motion")}
+          />
+          <Switch
+            label="Slot Lite Mode (reduced effects)"
+            value={!!slotLiteMode}
+            actionId="settings-slot-lite"
+            onToggle={() => runAction("settings-slot-lite")}
           />
 
           <div className="panel p-[1.4vmin]">
@@ -2170,10 +3301,9 @@ function App() {
                   key={d}
                   className="xg-btn"
                   style={settings.difficulty === d ? { background: "rgba(57,255,20,0.16)" } : null}
-                  onClick={() => {
-                    const preset = difficultyPreset(d);
-                    persistSettings({ difficulty: d, maxCycles: preset.maxCycles });
-                  }}
+                  data-action="settings-difficulty"
+                  data-value={d}
+                  onClick={() => runAction("settings-difficulty", { value: d })}
                 >
                   {d}
                 </button>
@@ -2194,7 +3324,8 @@ function App() {
                 value={settings.maxCycles}
                 min={8}
                 max={18}
-                onChange={(e) => persistSettings({ maxCycles: e.target.value })}
+                data-action="settings-max-cycles"
+                onChange={(e) => runAction("settings-max-cycles", { value: e.target.value })}
               />
             </div>
             <div className="mt-[1.0vmin] text-[1.2vmin] opacity-75">
@@ -2213,7 +3344,8 @@ function App() {
                 min={0.6}
                 max={1.2}
                 value={settings.uiIntensity}
-                onChange={(e) => persistSettings({ uiIntensity: e.target.value })}
+                data-action="settings-ui-intensity"
+                onChange={(e) => runAction("settings-ui-intensity", { value: e.target.value })}
               />
             </div>
           </div>
@@ -2224,10 +3356,10 @@ function App() {
               Resetting wipes Gene Credits, best run, and all upgrades.
             </div>
             <div className="mt-[1.2vmin] flex gap-[1.0vmin]">
-              <button className="xg-btn" onClick={resetProgress} style={{ borderColor: "rgba(255,140,0,0.45)" }}>
+              <button className="xg-btn" data-action="settings-reset-progress" onClick={() => runAction("settings-reset-progress")} style={{ borderColor: "rgba(255,140,0,0.45)" }}>
                 Reset Progress
               </button>
-              <button className="xg-btn" onClick={() => persistSettings(DEFAULT_SETTINGS)}>
+              <button className="xg-btn" data-action="settings-reset-defaults" onClick={() => runAction("settings-reset-defaults")}>
                 Restore Default Settings
               </button>
             </div>
@@ -2246,7 +3378,7 @@ function App() {
             <div className="badge">
               Credits: <span style={{ color: PALETTE.green }}>{geneCredits}</span>
             </div>
-            <button className="xg-btn" onClick={() => setScreen("lobby")}>Back to Lobby</button>
+            <button className="xg-btn" data-action="store-back-lobby" onClick={() => runAction("store-back-lobby")}>Back to Lobby</button>
           </div>
         </div>
         <div className="hr-scan my-[1.2vmin]" />
@@ -2273,7 +3405,9 @@ function App() {
                 <button
                   className="xg-btn"
                   disabled={!it.canBuy || geneCredits < it.cost}
-                  onClick={() => buyItem(it)}
+                  data-action="store-buy"
+                  data-item={it.id}
+                  onClick={() => runAction("store-buy", { id: it.id })}
                 >
                   {it.owned ? "Purchased" : "Buy"}
                 </button>
@@ -2322,14 +3456,26 @@ function App() {
                       <div className="mt-[1.0vmin] text-[1.35vmin] opacity-85">
                         Stability +30<br />Contamination +12
                       </div>
-                      <button className="xg-btn w-full mt-[1.4vmin]" onClick={() => chooseAnomaly("STABILITY")}>LOCK STABILITY</button>
+                      <button
+                        className="xg-btn w-full mt-[1.4vmin]"
+                        data-action="game-anomaly-stability"
+                        onClick={() => runAction("game-anomaly-stability")}
+                      >
+                        LOCK STABILITY
+                      </button>
                     </div>
                     <div className="panel p-[1.6vmin]">
                       <div className="os-title text-[1.35vmin]" style={{ color: PALETTE.blue }}>STEALTH FORK</div>
                       <div className="mt-[1.0vmin] text-[1.35vmin] opacity-85">
                         Alarm -22<br />Stability -8
                       </div>
-                      <button className="xg-btn w-full mt-[1.4vmin]" onClick={() => chooseAnomaly("STEALTH")}>GO DARK</button>
+                      <button
+                        className="xg-btn w-full mt-[1.4vmin]"
+                        data-action="game-anomaly-stealth"
+                        onClick={() => runAction("game-anomaly-stealth")}
+                      >
+                        GO DARK
+                      </button>
                     </div>
                   </>
                 ) : (
@@ -2339,14 +3485,26 @@ function App() {
                       <div className="mt-[1.0vmin] text-[1.35vmin] opacity-85">
                         Stability -15<br />Contamination -25<br />Alarm +10
                       </div>
-                      <button className="xg-btn w-full mt-[1.4vmin]" onClick={() => chooseAnomaly("PURGE")}>PURGE</button>
+                      <button
+                        className="xg-btn w-full mt-[1.4vmin]"
+                        data-action="game-anomaly-purge"
+                        onClick={() => runAction("game-anomaly-purge")}
+                      >
+                        PURGE
+                      </button>
                     </div>
                     <div className="panel p-[1.6vmin]">
                       <div className="os-title text-[1.35vmin]" style={{ color: PALETTE.green }}>EMBRACE NULL</div>
                       <div className="mt-[1.0vmin] text-[1.35vmin] opacity-85">
                         Stability +35<br />Alarm +25<br />Tag: NULL
                       </div>
-                      <button className="xg-btn w-full mt-[1.4vmin]" onClick={() => chooseAnomaly("EMBRACE")}>EMBRACE</button>
+                      <button
+                        className="xg-btn w-full mt-[1.4vmin]"
+                        data-action="game-anomaly-embrace"
+                        onClick={() => runAction("game-anomaly-embrace")}
+                      >
+                        EMBRACE
+                      </button>
                     </div>
                   </>
                 )}
@@ -2376,8 +3534,8 @@ function App() {
                 Opponent: <span style={{ color: PALETTE.green }}>{raceOpponent.status}</span> ({raceOpponent.lastEvent})
               </div>
               <div className="mp-row mt-[0.8vmin]">
-                <button className="xg-btn" onClick={() => copyRoomCode(mpStatus.roomCode)}>Copy Code</button>
-                <button className="xg-btn" onClick={() => leaveRoom("manual")}>Leave Room</button>
+                <button className="xg-btn" data-action="game-copy-code" onClick={() => runAction("game-copy-code")}>Copy Code</button>
+                <button className="xg-btn" data-action="game-leave-room" onClick={() => runAction("game-leave-room")}>Leave Room</button>
               </div>
             </div>
           )}
@@ -2393,16 +3551,16 @@ function App() {
           </div>
 
           <div className="mt-[1.4vmin] grid grid-cols-1 md:grid-cols-3 gap-[1.0vmin]">
-            <button className="xg-btn" disabled={phase !== "await_spin" || isSpinning || controlTokens <= 0 || tags.includes("FOG")} onClick={() => useBias(-1)}>Bias -1 (1T)</button>
-            <button className="xg-btn" disabled={phase !== "await_spin" || isSpinning || controlTokens <= 0 || tags.includes("FOG")} onClick={() => useBias(+1)}>Bias +1 (1T)</button>
-            <button className="xg-btn" disabled={phase !== "await_spin" || isSpinning || controlTokens <= 0} onClick={usePatch}>Patch (1T)</button>
+            <button className="xg-btn" data-action="game-bias-minus" disabled={phase !== "await_spin" || isSpinning || controlTokens <= 0 || tags.includes("FOG")} onClick={() => runAction("game-bias-minus")}>Bias -1 (1T)</button>
+            <button className="xg-btn" data-action="game-bias-plus" disabled={phase !== "await_spin" || isSpinning || controlTokens <= 0 || tags.includes("FOG")} onClick={() => runAction("game-bias-plus")}>Bias +1 (1T)</button>
+            <button className="xg-btn" data-action="game-patch" disabled={phase !== "await_spin" || isSpinning || controlTokens <= 0} onClick={() => runAction("game-patch")}>Patch (1T)</button>
           </div>
 
           <div className="mt-[1.2vmin] flex items-center justify-between gap-[1.2vmin]">
-            <button className="xg-btn flex-1" onClick={spinSequencer} disabled={phase !== "await_spin" || isSpinning || phase === "ended"}>
+            <button className="xg-btn flex-1" data-action="game-spin" onClick={() => runAction("game-spin")} disabled={phase !== "await_spin" || isSpinning || phase === "ended"}>
               {isSpinning ? "Sequencing..." : "Sequence"}
             </button>
-            <button className="xg-btn" onClick={abortToLobby}>Abort → Lobby</button>
+            <button className="xg-btn" data-action="game-abort" onClick={() => runAction("game-abort")}>Abort → Lobby</button>
           </div>
         </div>
 
@@ -2454,11 +3612,11 @@ function App() {
           <div className="panel p-[1.6vmin] mb-[1.2vmin]">
             <div className="os-title text-[1.35vmin]" style={{ color: PALETTE.blue }}>ACTIONS</div>
             <div className="mt-[0.8vmin] grid grid-cols-1 md:grid-cols-2 gap-[1.0vmin]">
-              <button className="xg-btn" onClick={actionExtract} disabled={phase !== "await_action" || phase === "ended"}>Extract</button>
-              <button className="xg-btn" onClick={actionReroute} disabled={phase !== "await_action" || controlTokens <= 0 || phase === "ended"}>Re-route (1T)</button>
-              <button className="xg-btn" onClick={actionVent} disabled={phase !== "await_action" || tags.includes("TRACE_LOCK") || phase === "ended"}>Vent</button>
-              <button className="xg-btn" onClick={actionGhost} disabled={phase !== "await_action" || phase === "ended"}>Ghost</button>
-              <button className="xg-btn md:col-span-2" onClick={actionBuffer} disabled={phase !== "await_action" || tags.includes("TRACE_LOCK") || phase === "ended"}>Synthesize Buffer</button>
+              <button className="xg-btn" data-action="game-action-extract" onClick={() => runAction("game-action-extract")} disabled={phase !== "await_action" || phase === "ended"}>Extract</button>
+              <button className="xg-btn" data-action="game-action-reroute" onClick={() => runAction("game-action-reroute")} disabled={phase !== "await_action" || controlTokens <= 0 || phase === "ended"}>Re-route (1T)</button>
+              <button className="xg-btn" data-action="game-action-vent" onClick={() => runAction("game-action-vent")} disabled={phase !== "await_action" || tags.includes("TRACE_LOCK") || phase === "ended"}>Vent</button>
+              <button className="xg-btn" data-action="game-action-ghost" onClick={() => runAction("game-action-ghost")} disabled={phase !== "await_action" || phase === "ended"}>Ghost</button>
+              <button className="xg-btn md:col-span-2" data-action="game-action-buffer" onClick={() => runAction("game-action-buffer")} disabled={phase !== "await_action" || tags.includes("TRACE_LOCK") || phase === "ended"}>Synthesize Buffer</button>
             </div>
           </div>
 
@@ -2508,7 +3666,7 @@ function App() {
                 </div>
               )}
 
-              <button className="xg-btn w-full mt-[1.0vmin]" onClick={abortToLobby}>
+              <button className="xg-btn w-full mt-[1.0vmin]" data-action="game-abort-return" onClick={() => runAction("game-abort-return")}>
                 Return to Lobby
               </button>
             </div>
@@ -2537,8 +3695,8 @@ function App() {
                 Room <span style={{ color: PALETTE.blue }}>{mpStatus.roomCode}</span> | Role <span style={{ color: PALETTE.green }}>{mpStatus.role}</span> | You are Player {mpStatus.playerId}
               </div>
               <div className="mp-row mt-[0.6vmin]">
-                <button className="xg-btn" onClick={() => copyRoomCode(mpStatus.roomCode)}>Copy Code</button>
-                <button className="xg-btn" onClick={() => leaveRoom("manual")}>Leave Room</button>
+                <button className="xg-btn" data-action="knct-copy-code" onClick={() => runAction("knct-copy-code")}>Copy Code</button>
+                <button className="xg-btn" data-action="knct-leave-room" onClick={() => runAction("knct-leave-room")}>Leave Room</button>
               </div>
             </div>
           )}
@@ -2565,7 +3723,8 @@ function App() {
           <div className="mt-[1.6vmin] flex-1 min-h-0 grid place-items-center">
             <div
               className="knct-board"
-              onPointerLeave={() => setKnctHoverCol(null)}
+              data-action="knct-hover-clear"
+              onPointerLeave={() => runAction("knct-hover-clear")}
               style={{ width: "min(78vmin, 92vw)" }}
             >
               <div className="knct-grid">
@@ -2596,8 +3755,10 @@ function App() {
                         key={cellKey}
                         type="button"
                         className={`knct-cell ${isHover ? "knct-cell--hover" : ""}`}
-                        onPointerEnter={() => setKnctHoverCol(cIdx)}
-                        onClick={() => handleKnctDrop(cIdx)}
+                        onPointerEnter={() => runAction("knct-hover-set", { col: cIdx })}
+                        data-action="knct-drop"
+                        data-col={cIdx}
+                        onClick={() => runAction("knct-drop", { col: cIdx })}
                         disabled={!!knctWinner}
                         aria-label={`Drop chip in column ${cIdx + 1}`}
                         style={knctMotionStyle}
@@ -2626,20 +3787,20 @@ function App() {
           )}
 
           <div className="mt-[1.6vmin] grid grid-cols-2 md:grid-cols-4 gap-[1.0vmin]">
-            <button className="xg-btn" onClick={() => resetKnctMatch()} disabled={knctMoves.length === 0 || (mpStatus.connected && mpStatus.mode === "knct4" && mpStatus.role !== "host")}>
+            <button className="xg-btn" data-action="knct-reset-match" onClick={() => runAction("knct-reset-match")} disabled={knctMoves.length === 0 || (mpStatus.connected && mpStatus.mode === "knct4" && mpStatus.role !== "host")}>
               Reset Match
             </button>
-            <button className="xg-btn" onClick={startNextKnctMatch} disabled={mpStatus.connected && mpStatus.mode === "knct4" && mpStatus.role !== "host"}>
+            <button className="xg-btn" data-action="knct-next-match" onClick={() => runAction("knct-next-match")} disabled={mpStatus.connected && mpStatus.mode === "knct4" && mpStatus.role !== "host"}>
               New Match
             </button>
-            <button className="xg-btn" onClick={() => setScreen("lobby")}>
+            <button className="xg-btn" data-action="knct-back-lobby" onClick={() => runAction("knct-back-lobby")}>
               Back to Lobby
             </button>
-            <button className="xg-btn" onClick={() => setScreen("settings")}>
+            <button className="xg-btn" data-action="knct-open-settings" onClick={() => runAction("knct-open-settings")}>
               Settings
             </button>
             {mpStatus.connected && mpStatus.mode === "knct4" && (
-              <button className="xg-btn" onClick={() => leaveRoom("manual")}>
+              <button className="xg-btn" data-action="knct-leave-room-footer" onClick={() => runAction("knct-leave-room-footer")}>
                 Leave Room
               </button>
             )}
@@ -2660,7 +3821,7 @@ function App() {
               Player 2 Wins: <span style={{ color: PALETTE.green }}>{knctScores.p2}</span><br />
               Draws: <span style={{ color: "rgba(255,140,0,0.88)" }}>{knctScores.draws}</span>
             </div>
-            <button className="xg-btn w-full mt-[1.0vmin]" onClick={resetKnctScores} disabled={mpStatus.connected && mpStatus.mode === "knct4" && mpStatus.role !== "host"}>
+            <button className="xg-btn w-full mt-[1.0vmin]" data-action="knct-reset-scores" onClick={() => runAction("knct-reset-scores")} disabled={mpStatus.connected && mpStatus.mode === "knct4" && mpStatus.role !== "host"}>
               Purge Score Cache
             </button>
           </div>
@@ -2673,7 +3834,9 @@ function App() {
                   key={set.id}
                   type="button"
                   className={`knct-chipset ${knctChipSetId === set.id ? "knct-chipset--active" : ""}`}
-                  onClick={() => updateKnctChipSet(set.id)}
+                  data-action="knct-chipset"
+                  data-chipset={set.id}
+                  onClick={() => runAction("knct-chipset", { id: set.id })}
                   disabled={mpStatus.connected && mpStatus.mode === "knct4" && mpStatus.role !== "host"}
                 >
                   <span className="knct-chipset-label">{set.label}</span>
@@ -2762,6 +3925,7 @@ function App() {
           <div className="flex items-center gap-[1.0vmin] flex-wrap justify-end">
             {navButton("lobby", "Lobby")}
             {navButton("knct4", "Connect-4")}
+            {navButton("slot", "Slot Machine")}
             {navButton("store", "Store")}
             {navButton("settings", "Settings")}
             {screen === "game" ? navButton("game", "Run") : null}
@@ -2771,6 +3935,7 @@ function App() {
         <div className="min-h-0">
           {screen === "lobby" && <LobbyScreen />}
           {screen === "knct4" && <Knct4Screen />}
+          {screen === "slot" && <SlotScreen />}
           {screen === "store" && <StoreScreen />}
           {screen === "settings" && <SettingsScreen />}
           {screen === "game" && <GameScreen />}
@@ -2778,7 +3943,7 @@ function App() {
 
         <div className="panel px-[2vmin] py-[1.4vmin] flex items-center justify-between">
           <div className="text-[1.2vmin] opacity-80">
-            BUILD: XG-OS / Lobby + Store + Settings + Run + Connect-4 / React18 + Tailwind + GSAP + Babel
+            BUILD: XG-OS / Lobby + Slot + Store + Settings + Run + Connect-4 / React18 + Tailwind + GSAP + Babel
           </div>
           <div className="text-[1.2vmin] opacity-80">
             WIN: Extract with Stability ≥ 100 | FAIL: Contam/Alarm reach 100 | CONTRACT: Quiet Extraction (Alarm &lt; 50)
@@ -2792,7 +3957,7 @@ function App() {
             <div className="hr-scan my-[1.2vmin]" />
             <div className="text-[1.25vmin] opacity-85">That room already has 2 players. Ask the host for a new code.</div>
             <div className="panel__actions">
-              <button className="xg-btn" onClick={() => setMpStatus((s) => ({ ...s, error: null }))}>OK</button>
+              <button className="xg-btn" data-action="modal-room-full-ok" onClick={() => runAction("modal-room-full-ok")}>OK</button>
             </div>
           </div>
         </div>
@@ -2809,13 +3974,14 @@ function App() {
               <input
                 className="xg-input"
                 value={mpJoinModal.code}
-                onChange={(e) => setMpJoinModal((s) => ({ ...s, code: normalizeRoomCode(e.target.value) }))}
+                data-action="modal-join-input"
+                onChange={(e) => runAction("modal-join-input", { value: e.target.value })}
                 placeholder="e.g. A9K2QZ"
               />
             </div>
             <div className="panel__actions">
-              <button className="xg-btn" onClick={() => setMpJoinModal({ open: false, mode: null, code: "" })}>Cancel</button>
-              <button className="xg-btn" onClick={submitJoin} disabled={!mpJoinModal.code}>Join</button>
+              <button className="xg-btn" data-action="modal-join-cancel" onClick={() => runAction("modal-join-cancel")}>Cancel</button>
+              <button className="xg-btn" data-action="modal-join-submit" onClick={() => runAction("modal-join-submit")} disabled={!mpJoinModal.code}>Join</button>
             </div>
           </div>
         </div>
@@ -2831,6 +3997,93 @@ function App() {
         <div>Presence: {mpStatus.presence}</div>
         <div>Last Event: {mpStatus.lastEvent}</div>
         {mpStatus.error && <div style={{ color: "rgba(255,140,0,0.88)" }}>Error: {mpStatus.error}</div>}
+      </div>
+
+      <div className="debug-overlay">
+        <button className="xg-btn debug-toggle" data-action="debug-toggle" onClick={() => runAction("debug-toggle")}>
+          {debugOpen ? "Close Debug" : "Open Debug"}
+        </button>
+        {debugOpen && (
+          <div className="debug-card">
+            <div className="os-title text-[1.35vmin]" style={{ color: PALETTE.green }}>IN-APP DEBUG</div>
+            <div className="mt-[0.8vmin] text-[1.2vmin] opacity-80">
+              Missing data-action: {debugReport.missingAction.length} | Missing handler: {debugReport.missingHandler.length}
+            </div>
+            <div className="mt-[0.8vmin] grid grid-cols-2 gap-[0.8vmin]">
+              <button className="xg-btn" data-action="debug-scan" onClick={() => runAction("debug-scan")}>Scan Actions</button>
+              <button className="xg-btn" data-action="debug-run-tests" onClick={() => runAction("debug-run-tests")}>Run Self Tests</button>
+              <button className="xg-btn" data-action="debug-run-sim" onClick={() => runAction("debug-run-sim")}>Run 10k Sim</button>
+              <button className="xg-btn" data-action="debug-reset-meters" onClick={() => runAction("debug-reset-meters")}>Reset Meters</button>
+            </div>
+
+            <div className="mt-[0.8vmin] grid grid-cols-2 gap-[0.8vmin]">
+              <div className="field">
+                <label>Slot Seed</label>
+                <input
+                  className="xg-input"
+                  type="number"
+                  value={slotSeed}
+                  data-action="debug-set-seed"
+                  onChange={(e) => runAction("debug-set-seed", { value: e.target.value })}
+                />
+              </div>
+              <div className="field">
+                <label>Slot Credits</label>
+                <input
+                  className="xg-input"
+                  type="number"
+                  value={slotCredits}
+                  data-action="debug-set-credits"
+                  onChange={(e) => runAction("debug-set-credits", { value: e.target.value })}
+                />
+              </div>
+            </div>
+
+            {slotSimStats && (
+              <div className="mt-[0.8vmin] text-[1.15vmin] opacity-85">
+                Sim {slotSimStats.spins} spins | RTP {slotSimStats.rtp.toFixed(3)} | Bonus {slotSimStats.bonusHits} | Seed {slotSimStats.seed}
+              </div>
+            )}
+
+            {slotLog.length > 0 && (
+              <div className="mt-[0.8vmin] text-[1.1vmin]">
+                Last Spins:
+                {slotLog.slice(0, 20).map((ln, idx) => (
+                  <div key={`${ln.t}-${idx}`} className="opacity-75">[{ln.t}] {ln.m}</div>
+                ))}
+              </div>
+            )}
+
+            {debugReport.missingAction.length > 0 && (
+              <div className="mt-[0.8vmin] text-[1.1vmin]">
+                Missing data-action:
+                {debugReport.missingAction.slice(0, 6).map((item) => (
+                  <div key={item} className="opacity-75">{item}</div>
+                ))}
+              </div>
+            )}
+
+            {debugReport.missingHandler.length > 0 && (
+              <div className="mt-[0.8vmin] text-[1.1vmin]">
+                Missing handlers:
+                {debugReport.missingHandler.slice(0, 6).map((item) => (
+                  <div key={item} className="opacity-75">{item}</div>
+                ))}
+              </div>
+            )}
+
+            {selfTestResults.length > 0 && (
+              <div className="mt-[0.8vmin] text-[1.1vmin]">
+                Self Tests:
+                {selfTestResults.map((t) => (
+                  <div key={t.name} className={t.pass ? "test-pass" : "test-fail"}>
+                    {t.pass ? "PASS" : "FAIL"} — {t.name} ({t.detail})
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
     </div>
