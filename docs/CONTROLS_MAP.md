@@ -93,5 +93,6 @@ This map lists all interactive controls, their `data-action` values, handlers, a
 | Debug | `button[data-action="debug-toggle"]` | `debug-toggle` | `setDebugOpen` | Opens/closes debug overlay. |
 | Debug | `button[data-action="debug-run-sim"]` | `debug-run-sim` | `runSlotSimulation` | Runs 10k Monte Carlo spins and updates RTP stats. |
 | Debug | `button[data-action="debug-reset-meters"]` | `debug-reset-meters` | `resetSlotMeters` | Resets jackpot meters to seed values. |
+| Debug | `button[data-action="debug-run-smoke"]` | `debug-run-smoke` | `runSmokeTests` | Runs automated browser smoke suite. |
 | Debug | `input[data-action="debug-set-seed"]` | `debug-set-seed` | `setSlotSeed` | Updates slot RNG seed. |
 | Debug | `input[data-action="debug-set-credits"]` | `debug-set-credits` | `setSlotCreditsTo` | Sets slot credits to input value. |

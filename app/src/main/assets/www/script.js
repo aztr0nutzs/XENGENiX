@@ -1097,7 +1097,9 @@ function App() {
   const [debugOpen, setDebugOpen] = useState(false);
   const [debugReport, setDebugReport] = useState({ missingAction: [], missingHandler: [] });
   const [selfTestResults, setSelfTestResults] = useState([]);
+  const [smokeResults, setSmokeResults] = useState([]);
   const [userInteracted, setUserInteracted] = useState(false);
+  const snapshotRef = useRef({});
 
   useEffect(() => {
     let active = true;
@@ -1148,6 +1150,36 @@ function App() {
   useEffect(() => {
     screenRef.current = screen;
   }, [screen]);
+
+  useEffect(() => {
+    snapshotRef.current = {
+      screen,
+      slotCredits,
+      slotBetPerLine,
+      slotIsSpinning,
+      slotLastOutcome,
+      slotLastSeen,
+      slotLog,
+      debugOpen,
+      debugReport,
+      selfTestResults,
+      smokeResults,
+      settings,
+    };
+  }, [
+    screen,
+    slotCredits,
+    slotBetPerLine,
+    slotIsSpinning,
+    slotLastOutcome,
+    slotLastSeen,
+    slotLog,
+    debugOpen,
+    debugReport,
+    selfTestResults,
+    smokeResults,
+    settings,
+  ]);
 
   useEffect(() => {
     try { localStorage.setItem(LS_KEYS.slotCredits, String(slotCredits)); } catch (_) {}
@@ -2447,6 +2479,26 @@ function App() {
     setSlotBetPerLine(clamp(next, 1, 10));
   }
 
+  function reloadSlotState() {
+    const credits = safeParseInt(localStorage.getItem(LS_KEYS.slotCredits), 1000);
+    const bet = clamp(safeParseInt(localStorage.getItem(LS_KEYS.slotBetPerLine), 1), 1, 10);
+    const meters = loadJSON(LS_KEYS.slotMeters, makeDefaultMeters());
+    const lastOutcome = loadJSON(LS_KEYS.slotLastOutcome, null);
+    const lastSeen = localStorage.getItem(LS_KEYS.slotLastSeen) !== "false";
+    setSlotCredits(credits);
+    setSlotBetPerLine(bet);
+    setSlotMeters(meters);
+    setSlotLastOutcome(lastOutcome);
+    setSlotLastSeen(lastSeen);
+    if (lastOutcome?.grid) {
+      setSlotGrid(lastOutcome.grid);
+      setSlotPrevGrid(lastOutcome.grid);
+      setSlotLineWins(lastOutcome.lineWins || []);
+      setSlotTotalWin(lastOutcome.totalWin || 0);
+      setSlotScatterWin(lastOutcome.scatterWin || 0);
+    }
+  }
+
   function classifyWin(totalWin, totalBet) {
     if (totalWin >= totalBet * 20) return "mega";
     if (totalWin >= totalBet * 10) return "big";
@@ -2818,6 +2870,14 @@ function App() {
     "debug-set-seed": (payload) => setSlotSeed(safeParseInt(payload.value, slotSeed)),
     "debug-set-credits": (payload) => setSlotCreditsTo(safeParseInt(payload.value, slotCredits)),
     "debug-reset-meters": () => resetSlotMeters(),
+    "debug-run-smoke": () => {
+      if (window.__XG_SMOKE__?.runSmokeTests) {
+        window.__XG_SMOKE__.runSmokeTests(window.__XG__);
+      } else {
+        setSmokeResults([{ name: "Smoke runner missing", pass: false, detail: "smoke.test.js not loaded." }]);
+      }
+    },
+    "slot-reload-state": () => reloadSlotState(),
   };
 
   function runAction(actionId, payload) {
@@ -2842,6 +2902,18 @@ function App() {
   useEffect(() => {
     return () => clearSlotTimeouts();
   }, []);
+
+  useEffect(() => {
+    window.__XG__ = {
+      runAction,
+      getSnapshot: () => snapshotRef.current,
+      setSmokeResults,
+      setDebugOpen,
+    };
+    return () => {
+      if (window.__XG__) delete window.__XG__;
+    };
+  }, [runAction]);
 
   /** ---------------------------
    *  RENDER SCREENS
@@ -4014,6 +4086,7 @@ function App() {
               <button className="xg-btn" data-action="debug-run-tests" onClick={() => runAction("debug-run-tests")}>Run Self Tests</button>
               <button className="xg-btn" data-action="debug-run-sim" onClick={() => runAction("debug-run-sim")}>Run 10k Sim</button>
               <button className="xg-btn" data-action="debug-reset-meters" onClick={() => runAction("debug-reset-meters")}>Reset Meters</button>
+              <button className="xg-btn" data-action="debug-run-smoke" onClick={() => runAction("debug-run-smoke")}>Run Smoke Tests</button>
             </div>
 
             <div className="mt-[0.8vmin] grid grid-cols-2 gap-[0.8vmin]">
@@ -4076,6 +4149,17 @@ function App() {
               <div className="mt-[0.8vmin] text-[1.1vmin]">
                 Self Tests:
                 {selfTestResults.map((t) => (
+                  <div key={t.name} className={t.pass ? "test-pass" : "test-fail"}>
+                    {t.pass ? "PASS" : "FAIL"} — {t.name} ({t.detail})
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {smokeResults.length > 0 && (
+              <div className="mt-[0.8vmin] text-[1.1vmin]">
+                Smoke Tests:
+                {smokeResults.map((t) => (
                   <div key={t.name} className={t.pass ? "test-pass" : "test-fail"}>
                     {t.pass ? "PASS" : "FAIL"} — {t.name} ({t.detail})
                   </div>
