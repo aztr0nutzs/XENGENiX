@@ -1,5 +1,6 @@
 plugins {
     id("com.android.application")
+    id("org.jetbrains.kotlin.android")
 }
 
 android {
@@ -8,7 +9,7 @@ android {
 
     defaultConfig {
         applicationId = "com.example.xenogenics"
-        minSdk = 23
+        minSdk = 26
         targetSdk = 35
 
         versionCode = 1
@@ -40,8 +41,12 @@ android {
     }
 
     buildFeatures {
-        // No Compose. Just a WebView wrapper.
+        compose = true
         buildConfig = true
+    }
+
+    composeOptions {
+        kotlinCompilerExtensionVersion = "1.5.15"
     }
 
     packaging {
@@ -63,12 +68,16 @@ android {
 
 dependencies {
     implementation("androidx.core:core-ktx:1.16.0")
-    implementation("androidx.appcompat:appcompat:1.7.1")
-    implementation("com.google.android.material:material:1.12.0")
+    implementation("androidx.activity:activity-compose:1.10.1")
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.9.2")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.2")
+    implementation("androidx.navigation:navigation-compose:2.9.3")
+    implementation("androidx.compose.ui:ui:1.7.8")
+    implementation("androidx.compose.ui:ui-tooling-preview:1.7.8")
+    implementation("androidx.compose.material3:material3:1.3.2")
+    implementation("androidx.datastore:datastore-preferences:1.1.7")
 
-    // Better WebView APIs and compat helpers
-    implementation("androidx.webkit:webkit:1.14.0")
-
-    // Activity back-press dispatcher etc (works fine with AppCompat)
-    implementation("androidx.activity:activity:1.10.1")
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("app.cash.turbine:turbine:1.2.0")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
 }

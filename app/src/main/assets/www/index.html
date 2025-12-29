@@ -2,34 +2,257 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta
-    name="viewport"
-    content="width=device-width, initial-scale=1, viewport-fit=cover"
-  />
-  <meta name="theme-color" content="#000000" />
-  <title>XENO-GENICS // XG-OS</title>
-
-  <!-- Tailwind CDN (dev-friendly). For real production, build Tailwind locally. -->
-  <script src="https://cdn.tailwindcss.com"></script>
-
-  <link rel="stylesheet" href="./style.css" />
-
-  <!-- React 18 UMD -->
-  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-
-  <!-- GSAP 3 -->
-  <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
-
-  <!-- Babel Standalone (JSX in-browser) -->
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>XENOGENICS</title>
+  <link rel="stylesheet" href="style.css" />
 </head>
-
 <body>
-  <!-- single body tag only. (No “Double Body” bug.) -->
-  <div id="root"></div>
+  <div class="scanlines" aria-hidden="true"></div>
+  <div class="noise" aria-hidden="true"></div>
 
-  <!-- Your game logic -->
-  <script type="text/babel" src="./script.js"></script>
+  <div id="lobby-screen" class="screen">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand__title">XENOGENICS</div>
+        <div class="brand__sub">MAIN LOBBY</div>
+      </div>
+    </header>
+    <main class="layout lobby-layout">
+        <section class="panel">
+          <h2 class="panel__title">GAMES</h2>
+          <div class="controls">
+            <button class="btn" id="startGameBtn">KNCT-4</button>
+          </div>
+        </section>
+        <section class="panel">
+            <h2 class="panel__title">SYSTEM</h2>
+            <div class="controls">
+                <button class="btn" id="settingsBtn">SETTINGS</button>
+            </div>
+        </section>
+    </main>
+  </div>
+
+  <div id="settings-screen" class="screen hidden">
+    <header class="topbar">
+        <div class="brand">
+          <div class="brand__title">XENOGENICS</div>
+          <div class="brand__sub">SETTINGS</div>
+        </div>
+        <button class="btn" id="backToLobbyBtnFromSettings">LOBBY</button>
+    </header>
+    <main class="layout">
+        <section class="panel">
+          <h2 class="panel__title">Coming Soon</h2>
+          <div class="controls">
+            <p>Settings will be implemented here.</p>
+          </div>
+        </section>
+    </main>
+  </div>
+
+  <div id="game-screen" class="screen hidden">
+    <div class="app">
+        <header class="topbar">
+          <div class="brand">
+            <div class="brand__title">PEGZ</div>
+            <div class="brand__sub">OOZELAB CONNECT-4</div>
+          </div>
+
+          <div class="topbar__status">
+            <div class="pill" id="turnPill">P1: GREEN</div>
+            <div class="pill pill--ghost" id="opponentPill">LOCAL</div>
+            <div class="pill pill--ghost" id="modePill">CLASSIC</div>
+            <div class="pill pill--timer" id="timerPill" hidden>TIME: <span id="timer">10</span>s</div>
+          </div>
+          <button class="btn" id="backToLobbyBtnFromGame">LOBBY</button>
+        </header>
+
+        <main class="layout">
+          <aside class="side side--left">
+            <section class="panel">
+              <h2 class="panel__title">Containment Controls</h2>
+
+              <div class="controls">
+                <div class="control-row">
+                  <div class="control-label">Opponent</div>
+                  <div class="control-group">
+                    <button class="chip" id="oppLocal" type="button" aria-pressed="true">Local</button>
+                    <button class="chip" id="oppCpu" type="button" aria-pressed="false">CPU (Easy)</button>
+                  </div>
+                </div>
+
+                <div class="control-row">
+                  <div class="control-label">Mode</div>
+                  <div class="control-group">
+                    <button class="chip" id="modeClassic" type="button" aria-pressed="true">Classic</button>
+                    <button class="chip" id="modeTimed" type="button" aria-pressed="false">Timed</button>
+                  </div>
+                </div>
+
+                <div class="control-row">
+                  <div class="control-label">Per-turn timer</div>
+                  <div class="control-group">
+                    <input id="turnSeconds" class="field" type="number" min="3" max="30" step="1" value="10" />
+                    <span class="hint">sec</span>
+                  </div>
+                </div>
+
+                <div class="control-row">
+                  <div class="control-label">Ooze intensity</div>
+                  <div class="control-group">
+                    <input id="oozeIntensity" class="slider" type="range" min="30" max="130" step="1" value="85" />
+                    <span class="hint" id="oozeVal">85%</span>
+                  </div>
+                </div>
+
+                <div class="control-row">
+                  <div class="control-label">Haptics</div>
+                  <div class="control-group">
+                    <button class="chip" id="hapticsBtn" type="button" aria-pressed="true">On</button>
+                  </div>
+                </div>
+
+                <div class="control-row">
+                  <div class="control-label">Sound</div>
+                  <div class="control-group">
+                    <button class="chip" id="soundBtn" type="button" aria-pressed="true">On</button>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section class="panel">
+              <h2 class="panel__title">Bio-Stats</h2>
+
+              <div class="stats">
+                <div class="stat">
+                  <div class="stat__label">P1 Wins</div>
+                  <div class="stat__value" id="p1Wins">0</div>
+                </div>
+                <div class="stat">
+                  <div class="stat__label">P2 Wins</div>
+                  <div class="stat__value" id="p2Wins">0</div>
+                </div>
+                <div class="stat">
+                  <div class="stat__label">Draws</div>
+                  <div class="stat__value" id="draws">0</div>
+                </div>
+                <div class="stat stat--wide">
+                  <div class="stat__label">Win Streak</div>
+                  <div class="stat__value" id="streak">0</div>
+                </div>
+              </div>
+
+              <div class="panel__actions">
+                <button class="btn btn--ghost" id="resetStatsBtn" type="button">Reset Stats</button>
+              </div>
+            </section>
+          </aside>
+
+          <section class="center">
+            <div class="board-shell">
+              <div class="ooze-drip" aria-hidden="true"></div>
+              <div class="ooze-fall" aria-hidden="true">
+                <div class="drip-drop"></div>
+                <div class="drip-drop"></div>
+                <div class="drip-drop"></div>
+                <div class="drip-drop"></div>
+                <div class="drip-drop"></div>
+                <div class="drip-drop"></div>
+                <div class="drip-drop"></div>
+                <div class="drip-drop"></div>
+                <div class="drip-drop"></div>
+                <div class="drip-drop"></div>
+              </div>
+              <div class="ooze-side ooze-side--left" aria-hidden="true"></div>
+              <div class="ooze-side ooze-side--right" aria-hidden="true"></div>
+
+
+              <div class="board" id="board" role="application" aria-label="Connect 4 board">
+                <div class="dropzones" id="dropzones" aria-hidden="false"></div>
+                <div class="cells" id="cells" aria-hidden="false"></div>
+              </div>
+
+              <div class="board-front" aria-hidden="true"></div>
+              <div class="ooze-puddle" id="oozePuddle" aria-hidden="true"><div class="ooze-bubbles" id="oozeBubbles" aria-hidden="true"></div></div>
+            </div>
+
+            <div class="toast" id="toast" role="status" aria-live="polite"></div>
+          </section>
+
+          <aside class="side side--right">
+            <section class="panel">
+              <h2 class="panel__title">Mission Readout</h2>
+
+              <div class="readout">
+                <div class="readout__row">
+                  <div class="readout__k">Last drop</div>
+                  <div class="readout__v" id="lastMove">—</div>
+                </div>
+                <div class="readout__row">
+                  <div class="readout__k">Moves</div>
+                  <div class="readout__v" id="moveCount">0</div>
+                </div>
+                <div class="readout__row">
+                  <div class="readout__k">Hint</div>
+                  <div class="readout__v">Tap a column to inject a specimen.</div>
+                </div>
+              </div>
+
+              <div class="panel__actions">
+                <button class="btn" id="newGameBtn" type="button">New Game</button>
+                <button class="btn btn--ghost" id="undoBtn" type="button">Undo</button>
+              </div>
+
+              <div class="panel__actions">
+                <button class="btn btn--danger" id="wipeBtn" type="button">Wipe Board</button>
+              </div>
+            </section>
+
+            <section class="panel">
+              <h2 class="panel__title">Specimens</h2>
+
+              <div class="palette">
+                <button class="swatch swatch--p1" id="p1Palette" type="button" title="Player 1 piece set"></button>
+                <button class="swatch swatch--p2" id="p2Palette" type="button" title="Player 2 piece set"></button>
+              </div>
+
+              <div class="hint small">
+                Tap each specimen to choose its character. Only two characters are active per match (P1 + P2).
+              </div>
+            </section>
+          </aside>
+        </main>
+
+        <div class="overlay hidden" id="overlay" role="dialog" aria-modal="true" aria-labelledby="overlayTitle">
+          <div class="overlay__card">
+            <div class="overlay__title" id="overlayTitle">GAME OVER</div>
+            <div class="overlay__body" id="overlayBody">—</div>
+            <div class="overlay__actions">
+              <button class="btn" id="replayBtn" type="button">Replay</button>
+              <button class="btn btn--ghost" id="closeBtn" type="button">Close</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="overlay hidden" id="picker" role="dialog" aria-modal="true" aria-labelledby="pickerTitle">
+          <div class="overlay__card overlay__card--picker">
+            <div class="overlay__title" id="pickerTitle">CHOOSE SPECIMEN</div>
+            <div class="picker__sub" id="pickerSub">PLAYER</div>
+            <div class="picker__grid" id="pickerGrid" role="list"></div>
+            <div class="overlay__actions">
+              <button class="btn btn--ghost" id="pickerCloseBtn" type="button">Close</button>
+            </div>
+          </div>
+        </div>
+
+        <footer class="footer">
+          <span>Keyboard: 1-7 to drop • U to undo • R to new game</span>
+        </footer>
+    </div>
+  </div>
+
+  <script src="script.js" defer></script>
 </body>
 </html>
